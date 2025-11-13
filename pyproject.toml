@@ -1,0 +1,19 @@
+[project]
+name = "stylegan2-ada-pytorch"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "click>=8.3.0",
+    "imageio>=2.37.2",
+    "imageio-ffmpeg>=0.6.0",
+    "ninja>=1.13.0",
+    "numpy>=2.3.4",
+    "pillow>=12.0.0",
+    "requests>=2.32.5",
+    "scipy>=1.16.3",
+    "torch>=2.9.1",
+    "torchvision>=0.24.1",
+    "tqdm>=4.67.1",
+]
