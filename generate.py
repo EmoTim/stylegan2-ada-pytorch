@@ -116,9 +116,18 @@ def generate_images(
     for seed_idx, seed in enumerate(seeds):
         print('Generating image for seed %d (%d/%d) ...' % (seed, seed_idx, len(seeds)))
         z = torch.from_numpy(np.random.RandomState(seed).randn(1, G.z_dim)).to(device)
-        img = G(z, label, truncation_psi=truncation_psi, noise_mode=noise_mode)
-        img = (img.permute(0, 2, 3, 1) * 127.5 + 128).clamp(0, 255).to(torch.uint8)
-        PIL.Image.fromarray(img[0].cpu().numpy(), 'RGB').save(f'{outdir}/seed{seed:04d}.png')
+        w = G.mapping(z, label)
+        # load the weight vector
+        weight_vector = torch.tensor(np.load("stylegan2-ada-pytorch/weight.npy"), device=device)  # (18, 512)
+        
+        for alpha in [-10, 0, 10]:
+            # apply weight change
+            w_modified = w + alpha * weight_vector.unsqueeze(0)  # shape: (1, 18, 512)
+
+            assert w_modified.shape[1:] == (G.num_ws, G.w_dim)
+            img = G.synthesis(w_modified, noise_mode=noise_mode)
+            img = (img.permute(0, 2, 3, 1) * 127.5 + 128).clamp(0, 255).to(torch.uint8)
+            PIL.Image.fromarray(img[0].cpu().numpy(), 'RGB').save(f'{outdir}/seed{seed:04d}_alpha{alpha}.png')
 
 
 #----------------------------------------------------------------------------
