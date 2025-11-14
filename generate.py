@@ -177,6 +177,19 @@ def generate_images(
 #----------------------------------------------------------------------------
 
 if __name__ == "__main__":
+    import sys
+
+    # Default arguments for debugging/development
+    if len(sys.argv) == 1:
+        sys.argv = [
+            'generate.py',
+            '--outdir=out',
+            '--trunc=0.7',
+            '--seeds=600-605',
+            '--weight-vector=weight.npy',
+            '--network=https://nvlabs-fi-cdn.nvidia.com/stylegan2-ada-pytorch/pretrained/ffhq.pkl'
+        ]
+
     generate_images() # pylint: disable=no-value-for-parameter
 
 #----------------------------------------------------------------------------
