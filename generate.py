@@ -44,7 +44,7 @@ def num_range(s: str) -> List[int]:
 @click.option('--projected-w', help='Projection result file', type=str, metavar='FILE')
 @click.option('--outdir', help='Where to save the output images', type=str, required=True, metavar='DIR')
 @click.option('--weight-vector', help='Path to weight vector file (.npy)', type=str, metavar='FILE')
-@click.option('--alphas', type=num_range, help='Alpha values for weight modulation (e.g., "-10,0,10" or "-10-10")', default='-10,0,10', show_default=True)
+@click.option('--alphas', type=num_range, help='Alpha values for weight modulation (e.g., "-10,0,10" or "-10-10")', default='-10,-5,0,5,10', show_default=True)
 def generate_images(
     ctx: click.Context,
     network_pkl: str,
@@ -80,6 +80,10 @@ def generate_images(
     # Render an image from projected W
     python generate.py --outdir=out --projected_w=projected_w.npz \\
         --network=https://nvlabs-fi-cdn.nvidia.com/stylegan2-ada-pytorch/pretrained/metfaces.pkl
+    
+    \b (Tim) Generate FFHQ images with weight modulation
+    python generate.py --outdir=stylegan2-ada-pytorch/out --trunc=0.7 --seeds=600-605 \\
+        --weight-vector=weight.npy --network=https://nvlabs-fi-cdn.nvidia.com/stylegan2-ada-pytorch/pretrained/ffhq.pkl
     """
 
     print('Loading networks from "%s"...' % network_pkl)
