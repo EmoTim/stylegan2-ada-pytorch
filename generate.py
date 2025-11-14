@@ -17,6 +17,7 @@ import dnnlib
 import numpy as np
 import PIL.Image
 import torch
+import matplotlib.pyplot as plt
 
 import legacy
 
@@ -155,22 +156,37 @@ def generate_images(
         print('Creating composite image...')
         num_rows = len(all_images)
         num_cols = len(alphas)
-        img_height, img_width = all_images[0][0].shape[:2]
 
-        # Create composite canvas
-        composite = np.zeros((num_rows * img_height, num_cols * img_width, 3), dtype=np.uint8)
+        # Create matplotlib figure
+        fig, axes = plt.subplots(num_rows, num_cols, figsize=(num_cols * 3, num_rows * 3))
 
+        # Handle case where there's only one row or one column
+        if num_rows == 1 and num_cols == 1:
+            axes = np.array([[axes]])
+        elif num_rows == 1:
+            axes = axes.reshape(1, -1)
+        elif num_cols == 1:
+            axes = axes.reshape(-1, 1)
+
+        # Plot images in grid
         for row_idx, seed_images in enumerate(all_images):
             for col_idx, img_array in enumerate(seed_images):
-                y_start = row_idx * img_height
-                y_end = (row_idx + 1) * img_height
-                x_start = col_idx * img_width
-                x_end = (col_idx + 1) * img_width
-                composite[y_start:y_end, x_start:x_end] = img_array
+                ax = axes[row_idx, col_idx]
+                ax.imshow(img_array)
+                ax.axis('off')
 
-        composite_img = PIL.Image.fromarray(composite, 'RGB')
+                # Add column labels (alpha values) on top row
+                if row_idx == 0:
+                    ax.set_title(f'α={alphas[col_idx]}', fontsize=12)
+
+                # Add row labels (seed numbers) on left column
+                if col_idx == 0:
+                    ax.set_ylabel(f'Seed {seeds[row_idx]}', fontsize=12, rotation=0, labelpad=40, va='center')
+
+        plt.tight_layout()
         composite_path = f'{outdir}/composite_grid.png'
-        composite_img.save(composite_path)
+        plt.savefig(composite_path, dpi=150, bbox_inches='tight')
+        plt.close()
         print(f'Composite image saved to {composite_path}')
 
 
@@ -183,10 +199,10 @@ if __name__ == "__main__":
     if len(sys.argv) == 1:
         sys.argv = [
             'generate.py',
-            '--outdir=out',
+            '--outdir=stylegan2-ada-pytorch/out',
             '--trunc=0.7',
             '--seeds=600-605',
-            '--weight-vector=weight.npy',
+            '--weight-vector=stylegan2-ada-pytorch/weight.npy',
             '--network=https://nvlabs-fi-cdn.nvidia.com/stylegan2-ada-pytorch/pretrained/ffhq.pkl'
         ]
 
