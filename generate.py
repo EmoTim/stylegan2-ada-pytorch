@@ -43,6 +43,8 @@ def num_range(s: str) -> List[int]:
 @click.option('--noise-mode', help='Noise mode', type=click.Choice(['const', 'random', 'none']), default='const', show_default=True)
 @click.option('--projected-w', help='Projection result file', type=str, metavar='FILE')
 @click.option('--outdir', help='Where to save the output images', type=str, required=True, metavar='DIR')
+@click.option('--weight-vector', help='Path to weight vector file (.npy)', type=str, metavar='FILE')
+@click.option('--alphas', type=num_range, help='Alpha values for weight modulation (e.g., "-10,0,10" or "-10-10")', default='-10,0,10', show_default=True)
 def generate_images(
     ctx: click.Context,
     network_pkl: str,
@@ -51,7 +53,9 @@ def generate_images(
     noise_mode: str,
     outdir: str,
     class_idx: Optional[int],
-    projected_w: Optional[str]
+    projected_w: Optional[str],
+    weight_vector: Optional[str],
+    alphas: List[int]
 ):
     """Generate images using pretrained network pickle.
 
@@ -112,22 +116,62 @@ def generate_images(
         if class_idx is not None:
             print ('warn: --class=lbl ignored when running on an unconditional network')
 
+    # Load weight vector if specified.
+    weight_vec = None
+    if weight_vector is not None:
+        print(f'Loading weight vector from "{weight_vector}"')
+        weight_vec = torch.tensor(np.load(weight_vector), device=device)
+        print(f'Weight vector shape: {weight_vec.shape}')
+
     # Generate images.
+    all_images = []  # Store images for composite: list of lists (one per seed)
+
     for seed_idx, seed in enumerate(seeds):
         print('Generating image for seed %d (%d/%d) ...' % (seed, seed_idx, len(seeds)))
         z = torch.from_numpy(np.random.RandomState(seed).randn(1, G.z_dim)).to(device)
         w = G.mapping(z, label)
-        # load the weight vector
-        weight_vector = torch.tensor(np.load("stylegan2-ada-pytorch/weight.npy"), device=device)  # (18, 512)
-        
-        for alpha in [-10, 0, 10]:
-            # apply weight change
-            w_modified = w + alpha * weight_vector.unsqueeze(0)  # shape: (1, 18, 512)
 
-            assert w_modified.shape[1:] == (G.num_ws, G.w_dim)
-            img = G.synthesis(w_modified, noise_mode=noise_mode)
+        if weight_vec is not None:
+            # Generate images with weight modulation
+            seed_images = []
+            for alpha in alphas:
+                w_modified = w + alpha * weight_vec.unsqueeze(0)
+                assert w_modified.shape[1:] == (G.num_ws, G.w_dim)
+                img = G.synthesis(w_modified, noise_mode=noise_mode)
+                img = (img.permute(0, 2, 3, 1) * 127.5 + 128).clamp(0, 255).to(torch.uint8)
+                img_array = img[0].cpu().numpy()
+                pil_img = PIL.Image.fromarray(img_array, 'RGB')
+                pil_img.save(f'{outdir}/seed{seed:04d}_alpha{alpha}.png')
+                seed_images.append(img_array)
+            all_images.append(seed_images)
+        else:
+            # Generate image without weight modulation
+            img = G.synthesis(w, noise_mode=noise_mode)
             img = (img.permute(0, 2, 3, 1) * 127.5 + 128).clamp(0, 255).to(torch.uint8)
-            PIL.Image.fromarray(img[0].cpu().numpy(), 'RGB').save(f'{outdir}/seed{seed:04d}_alpha{alpha}.png')
+            PIL.Image.fromarray(img[0].cpu().numpy(), 'RGB').save(f'{outdir}/seed{seed:04d}.png')
+
+    # Create composite image if weight modulation was used
+    if weight_vec is not None and len(all_images) > 0:
+        print('Creating composite image...')
+        num_rows = len(all_images)
+        num_cols = len(alphas)
+        img_height, img_width = all_images[0][0].shape[:2]
+
+        # Create composite canvas
+        composite = np.zeros((num_rows * img_height, num_cols * img_width, 3), dtype=np.uint8)
+
+        for row_idx, seed_images in enumerate(all_images):
+            for col_idx, img_array in enumerate(seed_images):
+                y_start = row_idx * img_height
+                y_end = (row_idx + 1) * img_height
+                x_start = col_idx * img_width
+                x_end = (col_idx + 1) * img_width
+                composite[y_start:y_end, x_start:x_end] = img_array
+
+        composite_img = PIL.Image.fromarray(composite, 'RGB')
+        composite_path = f'{outdir}/composite_grid.png'
+        composite_img.save(composite_path)
+        print(f'Composite image saved to {composite_path}')
 
 
 #----------------------------------------------------------------------------
