@@ -137,17 +137,27 @@ def generate_images(
         w = G.mapping(z, label)
 
         if weight_vec is not None:
-            # Generate images with weight modulation
+            # Generate images with weight modulation - batch all alphas together
             seed_images = []
-            for alpha in alphas:
-                w_modified = w + alpha * weight_vec.unsqueeze(0)
-                assert w_modified.shape[1:] == (G.num_ws, G.w_dim)
-                img = G.synthesis(w_modified, noise_mode=noise_mode)
-                img = (img.permute(0, 2, 3, 1) * 127.5 + 128).clamp(0, 255).to(torch.uint8)
-                img_array = img[0].cpu().numpy()
+
+            # Batch all alpha variations together for this seed
+            w_batch = w.repeat(len(alphas), 1, 1)  # Shape: (num_alphas, num_ws, w_dim)
+            alpha_tensor = torch.tensor(alphas, device=device).view(-1, 1, 1)  # Shape: (num_alphas, 1, 1)
+            w_modified_batch = w_batch + alpha_tensor * weight_vec.unsqueeze(0)  # Broadcasting
+
+            assert w_modified_batch.shape[1:] == (G.num_ws, G.w_dim)
+
+            # Synthesize all alpha variations in one batch
+            img_batch = G.synthesis(w_modified_batch, noise_mode=noise_mode)
+            img_batch = (img_batch.permute(0, 2, 3, 1) * 127.5 + 128).clamp(0, 255).to(torch.uint8)
+
+            # Save individual images and collect for composite
+            for alpha_idx, alpha in enumerate(alphas):
+                img_array = img_batch[alpha_idx].cpu().numpy()
                 pil_img = PIL.Image.fromarray(img_array, 'RGB')
                 pil_img.save(f'{outdir}/seed{seed:04d}_alpha{alpha}.png')
                 seed_images.append(img_array)
+
             all_images.append(seed_images)
         else:
             # Generate image without weight modulation
