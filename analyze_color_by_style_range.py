@@ -289,60 +289,49 @@ def plot_comparison_by_style_range(all_results: dict, output_dir: str):
     plt.savefig(output_dir / 'color_analysis_by_style_range_overview.png', dpi=150, bbox_inches='tight')
     plt.close()
 
-    # 2. RGB Channel Analysis - as % change
-    fig, axes = plt.subplots(1, 2, figsize=(16, 6))
+    # 2. RGB Channel Analysis - individual channels as % change
+    fig, axes = plt.subplots(2, 3, figsize=(18, 10))
 
-    # Mean plot (as % change)
-    ax = axes[0]
-    for style_range in sorted(all_results.keys()):
-        results = all_results[style_range]
-        label = get_style_range_label(style_range)
+    rgb_channels = ['R', 'G', 'B']
+    channel_colors = {'R': '#E63946', 'G': '#06D6A0', 'B': '#118AB2'}
 
-        # Compute average % change across R, G, B channels
-        rgb_pct_changes = []
-        for channel in ['R', 'G', 'B']:
+    # Row 1: Mean plots for each channel
+    for col_idx, channel in enumerate(rgb_channels):
+        ax = axes[0, col_idx]
+        for style_range in sorted(all_results.keys()):
+            results = all_results[style_range]
+            label = get_style_range_label(style_range)
             vals = np.array(results[f'rgb_{channel}_mean'])
             ref_val = vals[ref_idx]
             pct_change = (vals / ref_val - 1) * 100
-            rgb_pct_changes.append(pct_change)
+            ax.plot(results['alphas'], pct_change,
+                    marker='o', linewidth=2, label=label, color=style_colors[style_range])
 
-        # Average across channels
-        avg_pct_change = np.mean(rgb_pct_changes, axis=0)
-        ax.plot(results['alphas'], avg_pct_change,
-                marker='o', linewidth=2, label=label, color=style_colors[style_range])
+        ax.set_xlabel('Alpha', fontsize=11)
+        ax.set_ylabel(f'{channel} Channel Mean Change (%)', fontsize=11)
+        ax.set_title(f'{channel} Channel Mean vs Alpha', fontsize=12, fontweight='bold', color=channel_colors[channel])
+        ax.legend(fontsize=9)
+        ax.grid(True, alpha=0.3)
+        ax.axhline(y=0, color='black', linestyle='-', alpha=0.3, linewidth=1)
 
-    ax.set_xlabel('Alpha', fontsize=12)
-    ax.set_ylabel('RGB Channel Mean Change (%)', fontsize=12)
-    ax.set_title('RGB Channel Means vs Alpha (avg across R,G,B)', fontsize=14, fontweight='bold')
-    ax.legend()
-    ax.grid(True, alpha=0.3)
-    ax.axhline(y=0, color='black', linestyle='-', alpha=0.3, linewidth=1)
-
-    # Std plot (as % change)
-    ax = axes[1]
-    for style_range in sorted(all_results.keys()):
-        results = all_results[style_range]
-        label = get_style_range_label(style_range)
-
-        # Compute average % change across R, G, B channels
-        rgb_pct_changes = []
-        for channel in ['R', 'G', 'B']:
+    # Row 2: Std dev plots for each channel
+    for col_idx, channel in enumerate(rgb_channels):
+        ax = axes[1, col_idx]
+        for style_range in sorted(all_results.keys()):
+            results = all_results[style_range]
+            label = get_style_range_label(style_range)
             vals = np.array(results[f'rgb_{channel}_std'])
             ref_val = vals[ref_idx]
             pct_change = (vals / ref_val - 1) * 100
-            rgb_pct_changes.append(pct_change)
+            ax.plot(results['alphas'], pct_change,
+                    marker='s', linewidth=2, label=label, color=style_colors[style_range])
 
-        # Average across channels
-        avg_pct_change = np.mean(rgb_pct_changes, axis=0)
-        ax.plot(results['alphas'], avg_pct_change,
-                marker='s', linewidth=2, label=label, color=style_colors[style_range])
-
-    ax.set_xlabel('Alpha', fontsize=12)
-    ax.set_ylabel('RGB Channel Std Dev Change (%)', fontsize=12)
-    ax.set_title('RGB Channel Variation vs Alpha (avg across R,G,B)', fontsize=14, fontweight='bold')
-    ax.legend()
-    ax.grid(True, alpha=0.3)
-    ax.axhline(y=0, color='black', linestyle='-', alpha=0.3, linewidth=1)
+        ax.set_xlabel('Alpha', fontsize=11)
+        ax.set_ylabel(f'{channel} Channel Std Dev Change (%)', fontsize=11)
+        ax.set_title(f'{channel} Channel Variation vs Alpha', fontsize=12, fontweight='bold', color=channel_colors[channel])
+        ax.legend(fontsize=9)
+        ax.grid(True, alpha=0.3)
+        ax.axhline(y=0, color='black', linestyle='-', alpha=0.3, linewidth=1)
 
     plt.suptitle('RGB Channel Statistics by Style Range (% Change)',
                  fontsize=16, y=0.995, fontweight='bold')
@@ -350,32 +339,30 @@ def plot_comparison_by_style_range(all_results: dict, output_dir: str):
     plt.savefig(output_dir / 'rgb_analysis_by_style_range.png', dpi=150, bbox_inches='tight')
     plt.close()
 
-    # 3. LAB channel analysis - as % change
-    fig, ax = plt.subplots(1, 1, figsize=(12, 6))
+    # 3. LAB channel analysis - individual channels as % change
+    fig, axes = plt.subplots(1, 3, figsize=(18, 5))
 
-    for style_range in sorted(all_results.keys()):
-        results = all_results[style_range]
-        label = get_style_range_label(style_range)
+    lab_channels = ['L', 'A', 'B']
+    lab_names = ['Lightness (L)', 'Green-Red (a*)', 'Blue-Yellow (b*)']
+    lab_colors = {'L': '#FFB703', 'A': '#06D6A0', 'B': '#118AB2'}
 
-        # Compute average % change across L, A, B channels
-        lab_pct_changes = []
-        for channel in ['L', 'A', 'B']:
+    for col_idx, (channel, name) in enumerate(zip(lab_channels, lab_names)):
+        ax = axes[col_idx]
+        for style_range in sorted(all_results.keys()):
+            results = all_results[style_range]
+            label = get_style_range_label(style_range)
             vals = np.array(results[f'lab_{channel}_mean'])
             ref_val = vals[ref_idx]
             pct_change = (vals / ref_val - 1) * 100
-            lab_pct_changes.append(pct_change)
+            ax.plot(results['alphas'], pct_change,
+                    marker='o', linewidth=2, label=label, color=style_colors[style_range])
 
-        # Average across channels
-        avg_pct_change = np.mean(lab_pct_changes, axis=0)
-        ax.plot(results['alphas'], avg_pct_change,
-                marker='o', linewidth=2, label=label, color=style_colors[style_range])
-
-    ax.set_xlabel('Alpha', fontsize=12)
-    ax.set_ylabel('LAB Channel Mean Change (%)', fontsize=12)
-    ax.set_title('LAB Color Space vs Alpha (avg across L,a*,b*)', fontsize=14, fontweight='bold')
-    ax.legend()
-    ax.grid(True, alpha=0.3)
-    ax.axhline(y=0, color='black', linestyle='-', alpha=0.3, linewidth=1)
+        ax.set_xlabel('Alpha', fontsize=11)
+        ax.set_ylabel(f'{name} Change (%)', fontsize=11)
+        ax.set_title(f'{name} vs Alpha', fontsize=12, fontweight='bold', color=lab_colors[channel])
+        ax.legend(fontsize=9)
+        ax.grid(True, alpha=0.3)
+        ax.axhline(y=0, color='black', linestyle='-', alpha=0.3, linewidth=1)
 
     plt.suptitle('LAB Color Space by Style Range (% Change)',
                  fontsize=16, y=0.995, fontweight='bold')
