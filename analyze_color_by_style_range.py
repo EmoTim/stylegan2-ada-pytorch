@@ -289,15 +289,15 @@ def plot_comparison_by_style_range(all_results: dict, output_dir: str):
     plt.savefig(output_dir / 'color_analysis_by_style_range_overview.png', dpi=150, bbox_inches='tight')
     plt.close()
 
-    # 2. RGB Channel Analysis - individual channels as % change
-    fig, axes = plt.subplots(2, 3, figsize=(18, 10))
+    # 2. RGB Channel Analysis - individual channels as % change + red proportion
+    fig, axes = plt.subplots(1, 4, figsize=(20, 5))
 
     rgb_channels = ['R', 'G', 'B']
     channel_colors = {'R': '#E63946', 'G': '#06D6A0', 'B': '#118AB2'}
 
-    # Row 1: Mean plots for each channel
+    # Columns 0-2: Mean plots for each channel
     for col_idx, channel in enumerate(rgb_channels):
-        ax = axes[0, col_idx]
+        ax = axes[col_idx]
         for style_range in sorted(all_results.keys()):
             results = all_results[style_range]
             label = get_style_range_label(style_range)
@@ -314,26 +314,34 @@ def plot_comparison_by_style_range(all_results: dict, output_dir: str):
         ax.grid(True, alpha=0.3)
         ax.axhline(y=0, color='black', linestyle='-', alpha=0.3, linewidth=1)
 
-    # Row 2: Std dev plots for each channel
-    for col_idx, channel in enumerate(rgb_channels):
-        ax = axes[1, col_idx]
-        for style_range in sorted(all_results.keys()):
-            results = all_results[style_range]
-            label = get_style_range_label(style_range)
-            vals = np.array(results[f'rgb_{channel}_std'])
-            ref_val = vals[ref_idx]
-            pct_change = (vals / ref_val - 1) * 100
-            ax.plot(results['alphas'], pct_change,
-                    marker='s', linewidth=2, label=label, color=style_colors[style_range])
+    # Column 3: Red proportion (R / (R+G+B))
+    ax = axes[3]
+    for style_range in sorted(all_results.keys()):
+        results = all_results[style_range]
+        label = get_style_range_label(style_range)
 
-        ax.set_xlabel('Alpha', fontsize=11)
-        ax.set_ylabel(f'{channel} Channel Std Dev Change (%)', fontsize=11)
-        ax.set_title(f'{channel} Channel Variation vs Alpha', fontsize=12, fontweight='bold', color=channel_colors[channel])
-        ax.legend(fontsize=9)
-        ax.grid(True, alpha=0.3)
-        ax.axhline(y=0, color='black', linestyle='-', alpha=0.3, linewidth=1)
+        r_vals = np.array(results['rgb_R_mean'])
+        g_vals = np.array(results['rgb_G_mean'])
+        b_vals = np.array(results['rgb_B_mean'])
 
-    plt.suptitle('RGB Channel Statistics by Style Range (% Change)',
+        # Calculate red proportion
+        red_proportion = r_vals / (r_vals + g_vals + b_vals)
+        ref_red_proportion = red_proportion[ref_idx]
+
+        # Convert to percentage change
+        pct_change = (red_proportion / ref_red_proportion - 1) * 100
+
+        ax.plot(results['alphas'], pct_change,
+                marker='D', linewidth=2, label=label, color=style_colors[style_range])
+
+    ax.set_xlabel('Alpha', fontsize=11)
+    ax.set_ylabel('Red Proportion Change (%)', fontsize=11)
+    ax.set_title('Red Proportion vs Alpha\n(R / (R+G+B))', fontsize=12, fontweight='bold', color='#E63946')
+    ax.legend(fontsize=9)
+    ax.grid(True, alpha=0.3)
+    ax.axhline(y=0, color='black', linestyle='-', alpha=0.3, linewidth=1)
+
+    plt.suptitle('RGB Channel Analysis by Style Range (% Change)',
                  fontsize=16, y=0.995, fontweight='bold')
     plt.tight_layout()
     plt.savefig(output_dir / 'rgb_analysis_by_style_range.png', dpi=150, bbox_inches='tight')
