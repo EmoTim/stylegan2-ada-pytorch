@@ -45,7 +45,7 @@ def num_range(s: str) -> List[int]:
 @click.option('--projected-w', help='Projection result file', type=str, metavar='FILE')
 @click.option('--outdir', help='Where to save the output images', type=str, required=True, metavar='DIR')
 @click.option('--weight-vector', help='Path to weight vector file (.npy)', type=str, metavar='FILE')
-@click.option('--alphas', type=num_range, help='Alpha values for weight modulation (e.g., "-10,0,10" or "-10-10")', default='-10,-5, -2, -1, 0, 1, 2, 5, 10', show_default=True)
+@click.option('--alphas', type=num_range, help='Alpha values for weight modulation (e.g., "-10,0,10" or "-10-10")', default='-5, -2, -1, 0, 1, 2, 5', show_default=True)
 @click.option('--style-range', type=(int, int), help='Range of style blocks to apply weight vector (start, end). Coarse: 0-8, Middle: 4-12, Fine: 12-17. Default: all (0, 17)', default=(0, 17), show_default=True)
 def generate_images(
     ctx: click.Context,
