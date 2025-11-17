@@ -289,15 +289,16 @@ def plot_comparison_by_style_range(all_results: dict, output_dir: str):
     plt.savefig(output_dir / 'color_analysis_by_style_range_overview.png', dpi=150, bbox_inches='tight')
     plt.close()
 
-    # 2. RGB Channel Analysis - individual channels as % change + red proportion
-    fig, axes = plt.subplots(1, 4, figsize=(20, 5))
+    # 2. RGB Channel Analysis - 2 rows: means and proportions for each channel
+    fig, axes = plt.subplots(2, 3, figsize=(18, 10))
 
     rgb_channels = ['R', 'G', 'B']
     channel_colors = {'R': '#E63946', 'G': '#06D6A0', 'B': '#118AB2'}
+    channel_names = {'R': 'Red', 'G': 'Green', 'B': 'Blue'}
 
-    # Columns 0-2: Mean plots for each channel
+    # Row 0: Mean plots for each channel
     for col_idx, channel in enumerate(rgb_channels):
-        ax = axes[col_idx]
+        ax = axes[0, col_idx]
         for style_range in sorted(all_results.keys()):
             results = all_results[style_range]
             label = get_style_range_label(style_range)
@@ -310,36 +311,46 @@ def plot_comparison_by_style_range(all_results: dict, output_dir: str):
         ax.set_xlabel('Alpha', fontsize=11)
         ax.set_ylabel(f'{channel} Channel Mean Change (%)', fontsize=11)
         ax.set_title(f'{channel} Channel Mean vs Alpha', fontsize=12, fontweight='bold', color=channel_colors[channel])
-        ax.legend(fontsize=9)
+        ax.legend(fontsize=8)
         ax.grid(True, alpha=0.3)
         ax.axhline(y=0, color='black', linestyle='-', alpha=0.3, linewidth=1)
 
-    # Column 3: Red proportion (R / (R+G+B))
-    ax = axes[3]
-    for style_range in sorted(all_results.keys()):
-        results = all_results[style_range]
-        label = get_style_range_label(style_range)
+    # Row 1: Proportion plots for each channel (R/(R+G+B), G/(R+G+B), B/(R+G+B))
+    for col_idx, channel in enumerate(rgb_channels):
+        ax = axes[1, col_idx]
 
-        r_vals = np.array(results['rgb_R_mean'])
-        g_vals = np.array(results['rgb_G_mean'])
-        b_vals = np.array(results['rgb_B_mean'])
+        for style_range in sorted(all_results.keys()):
+            results = all_results[style_range]
+            label = get_style_range_label(style_range)
 
-        # Calculate red proportion
-        red_proportion = r_vals / (r_vals + g_vals + b_vals)
-        ref_red_proportion = red_proportion[ref_idx]
+            r_vals = np.array(results['rgb_R_mean'])
+            g_vals = np.array(results['rgb_G_mean'])
+            b_vals = np.array(results['rgb_B_mean'])
+            total = r_vals + g_vals + b_vals
 
-        # Convert to percentage change
-        pct_change = (red_proportion / ref_red_proportion - 1) * 100
+            # Calculate proportion for current channel
+            if channel == 'R':
+                proportion = r_vals / total
+            elif channel == 'G':
+                proportion = g_vals / total
+            else:  # 'B'
+                proportion = b_vals / total
 
-        ax.plot(results['alphas'], pct_change,
-                marker='D', linewidth=2, label=label, color=style_colors[style_range])
+            ref_proportion = proportion[ref_idx]
 
-    ax.set_xlabel('Alpha', fontsize=11)
-    ax.set_ylabel('Red Proportion Change (%)', fontsize=11)
-    ax.set_title('Red Proportion vs Alpha\n(R / (R+G+B))', fontsize=12, fontweight='bold', color='#E63946')
-    ax.legend(fontsize=9)
-    ax.grid(True, alpha=0.3)
-    ax.axhline(y=0, color='black', linestyle='-', alpha=0.3, linewidth=1)
+            # Convert to percentage change
+            pct_change = (proportion / ref_proportion - 1) * 100
+
+            ax.plot(results['alphas'], pct_change,
+                    marker='D', linewidth=2, label=label, color=style_colors[style_range])
+
+        ax.set_xlabel('Alpha', fontsize=11)
+        ax.set_ylabel(f'{channel_names[channel]} Proportion Change (%)', fontsize=11)
+        ax.set_title(f'{channel_names[channel]} Proportion vs Alpha\n({channel} / (R+G+B))',
+                     fontsize=12, fontweight='bold', color=channel_colors[channel])
+        ax.legend(fontsize=8)
+        ax.grid(True, alpha=0.3)
+        ax.axhline(y=0, color='black', linestyle='-', alpha=0.3, linewidth=1)
 
     plt.suptitle('RGB Channel Analysis by Style Range (% Change)',
                  fontsize=16, y=0.995, fontweight='bold')
