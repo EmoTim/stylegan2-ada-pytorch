@@ -38,7 +38,6 @@ def load_images_by_style_range(image_dir: str, pattern: str = "seed*_alpha*_styl
             style_end = int(match.group(4))
             style_range = (style_start, style_end)
 
-            # Load image
             img = np.array(Image.open(img_path))
 
             if style_range not in images:
@@ -57,13 +56,11 @@ def compute_color_statistics(image: np.ndarray) -> dict:
     """Compute RGB color statistics for an image."""
     stats_dict = {}
 
-    # RGB statistics
     for i, channel in enumerate(['R', 'G', 'B']):
         channel_data = image[:, :, i].flatten()
         stats_dict[f'rgb_{channel}_mean'] = np.mean(channel_data)
         stats_dict[f'rgb_{channel}_std'] = np.std(channel_data)
 
-    # Overall statistics
     stats_dict['overall_brightness'] = np.mean(image)
 
     return stats_dict
@@ -80,13 +77,10 @@ def analyze_style_range_data(style_range_data: dict, reference_alpha: int = 0) -
     Returns:
         Dict with analysis results aggregated across seeds
     """
-    # Get all alphas (should be same for all seeds)
     first_seed = next(iter(style_range_data.keys()))
     alphas = sorted(style_range_data[first_seed].keys())
 
-    # Find reference alpha
-    if reference_alpha not in alphas:
-        reference_alpha = min(alphas, key=lambda x: abs(x))
+    reference_alpha = 0
 
     results = {
         'alphas': alphas,
@@ -111,11 +105,9 @@ def analyze_style_range_data(style_range_data: dict, reference_alpha: int = 0) -
             img = seed_data[alpha]['image']
             ref_img = seed_data[reference_alpha]['image']
 
-            # Compute metrics
             stats_current = compute_color_statistics(img)
             stats_ref = compute_color_statistics(ref_img)
 
-            # RGB mean shift
             rgb_shift = np.sqrt(
                 (stats_current['rgb_R_mean'] - stats_ref['rgb_R_mean'])**2 +
                 (stats_current['rgb_G_mean'] - stats_ref['rgb_G_mean'])**2 +
@@ -123,15 +115,12 @@ def analyze_style_range_data(style_range_data: dict, reference_alpha: int = 0) -
             )
             alpha_rgb_shift.append(rgb_shift)
 
-            # Brightness shift
             brightness_shift = abs(stats_current['overall_brightness'] - stats_ref['overall_brightness'])
             alpha_brightness_shift.append(brightness_shift)
 
-            # Collect stats
             for key in alpha_stats.keys():
                 alpha_stats[key].append(stats_current[key])
 
-        # Average across seeds
         results['rgb_mean_shift'].append(np.mean(alpha_rgb_shift))
         results['brightness_shift'].append(np.mean(alpha_brightness_shift))
 
@@ -165,20 +154,17 @@ def plot_comparison_by_style_range(all_results: dict, output_dir: str):
     output_dir = Path(output_dir)
     output_dir.mkdir(exist_ok=True)
 
-    # Set style
     sns.set_style("whitegrid")
 
-    # Color palette for different style ranges
     style_colors = {}
     color_palette = sns.color_palette("husl", len(all_results))
     for idx, style_range in enumerate(sorted(all_results.keys())):
         style_colors[style_range] = color_palette[idx]
 
-    # Get alphas (should be same for all style ranges)
     alphas = next(iter(all_results.values()))['alphas']
     ref_idx = min(range(len(alphas)), key=lambda i: abs(alphas[i]))
 
-    # 1. Overview plot with 2 key metrics
+    # fig1. Overview plot with 2 key metrics
     fig, axes = plt.subplots(1, 2, figsize=(14, 5))
 
     # Plot 1: RGB Mean Shift
@@ -215,7 +201,7 @@ def plot_comparison_by_style_range(all_results: dict, output_dir: str):
     plt.savefig(output_dir / 'color_analysis_by_style_range_overview.png', dpi=150, bbox_inches='tight')
     plt.close()
 
-    # 2. RGB Channel Analysis - 2 rows: means and proportions for each channel
+    # fig2. RGB Channel Analysis - 2 rows: means and proportions for each channel
     fig, axes = plt.subplots(2, 3, figsize=(18, 10))
 
     rgb_channels = ['R', 'G', 'B']
