@@ -389,7 +389,7 @@ if __name__ == '__main__':
 
 
 #  Basic usage
-# python analyze_color_shift.py --image-dir out/
+# uv run python analyze_color_shift.py --image-dir out/
 
 #  Specify output directory and reference alpha
-# python analyze_color_shift.py --image-dir out/ --output-dir analysis_results/ --reference-alpha 0
+# uv run python analyze_color_shift.py --image-dir out/ --output-dir analysis_results/ --reference-alpha 0
