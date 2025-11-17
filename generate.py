@@ -46,6 +46,7 @@ def num_range(s: str) -> List[int]:
 @click.option('--outdir', help='Where to save the output images', type=str, required=True, metavar='DIR')
 @click.option('--weight-vector', help='Path to weight vector file (.npy)', type=str, metavar='FILE')
 @click.option('--alphas', type=num_range, help='Alpha values for weight modulation (e.g., "-10,0,10" or "-10-10")', default='-10,-5,0,5,10', show_default=True)
+@click.option('--style-range', type=(int, int), help='Range of style blocks to apply weight vector (start, end). Coarse: 0-8, Middle: 4-12, Fine: 12-17. Default: all (0, 17)', default=(0, 17), show_default=True)
 def generate_images(
     ctx: click.Context,
     network_pkl: str,
@@ -56,7 +57,8 @@ def generate_images(
     class_idx: Optional[int],
     projected_w: Optional[str],
     weight_vector: Optional[str],
-    alphas: List[int]
+    alphas: List[int],
+    style_range: tuple
 ):
     """Generate images using pretrained network pickle.
 
@@ -82,9 +84,25 @@ def generate_images(
     python generate.py --outdir=out --projected_w=projected_w.npz \\
         --network=https://nvlabs-fi-cdn.nvidia.com/stylegan2-ada-pytorch/pretrained/metfaces.pkl
     
-    \b (Tim) Generate FFHQ images with weight modulation
+    \b
+    # (Tim) Generate FFHQ images with weight modulation
     python generate.py --outdir=stylegan2-ada-pytorch/out --trunc=0.7 --seeds=600-605 \\
         --weight-vector=weight.npy --network=https://nvlabs-fi-cdn.nvidia.com/stylegan2-ada-pytorch/pretrained/ffhq.pkl
+
+    \b
+    # (Tim) Generate with weight modulation on coarse styles only (pose, face shape, eyeglasses)
+    python generate.py --outdir=out --trunc=0.7 --seeds=600-605 \\
+        --weight-vector=weight.npy --style-range 0 8 --network=https://nvlabs-fi-cdn.nvidia.com/stylegan2-ada-pytorch/pretrained/ffhq.pkl
+
+    \b
+    # (Tim) Generate with weight modulation on middle styles (facial features, hair style, eyes)
+    python generate.py --outdir=out --trunc=0.7 --seeds=600-605 \\
+        --weight-vector=weight.npy --style-range 4 12 --network=https://nvlabs-fi-cdn.nvidia.com/stylegan2-ada-pytorch/pretrained/ffhq.pkl
+
+    \b
+    # (Tim) Generate with weight modulation on fine styles (color scheme, microstructure)
+    python generate.py --outdir=out --trunc=0.7 --seeds=600-605 \\
+        --weight-vector=weight.npy --style-range 12 17 --network=https://nvlabs-fi-cdn.nvidia.com/stylegan2-ada-pytorch/pretrained/ffhq.pkl
     """
 
     print('Loading networks from "%s"...' % network_pkl)
@@ -128,6 +146,14 @@ def generate_images(
         weight_vec = torch.tensor(np.load(weight_vector), device=device)
         print(f'Weight vector shape: {weight_vec.shape}')
 
+        # Validate style range
+        start_idx, end_idx = style_range
+        if not (0 <= start_idx <= 17 and 0 <= end_idx <= 17):
+            ctx.fail('Style range indices must be between 0 and 17')
+        if start_idx > end_idx:
+            ctx.fail('Style range start must be <= end')
+        print(f'Applying weight vector to style blocks {start_idx} to {end_idx} (inclusive)')
+
     # Generate images.
     all_images = []  # Store images for composite: list of lists (one per seed)
 
@@ -139,14 +165,18 @@ def generate_images(
         if weight_vec is not None:
             # Generate images with weight modulation
             seed_images = []
+            start_idx, end_idx = style_range
             for alpha in alphas:
-                w_modified = w + alpha * weight_vec.unsqueeze(0)
+                # Clone w to avoid modifying the original
+                w_modified = w.clone()
+                # Apply weight vector only to the specified range of style blocks
+                w_modified[:, start_idx:end_idx+1, :] += alpha * weight_vec[start_idx:end_idx+1, :].unsqueeze(0)
                 assert w_modified.shape[1:] == (G.num_ws, G.w_dim)
                 img = G.synthesis(w_modified, noise_mode=noise_mode)
                 img = (img.permute(0, 2, 3, 1) * 127.5 + 128).clamp(0, 255).to(torch.uint8)
                 img_array = img[0].cpu().numpy()
                 pil_img = PIL.Image.fromarray(img_array, 'RGB')
-                pil_img.save(f'{outdir}/seed{seed:04d}_alpha{alpha}.png')
+                pil_img.save(f'{outdir}/seed{seed:04d}_alpha{alpha}_styles{start_idx}-{end_idx}.png')
                 seed_images.append(img_array)
             all_images.append(seed_images)
         else:
@@ -160,6 +190,7 @@ def generate_images(
         print('Creating composite image...')
         num_rows = len(all_images)
         num_cols = len(alphas)
+        start_idx, end_idx = style_range
 
         # Create matplotlib figure
         fig, axes = plt.subplots(num_rows, num_cols, figsize=(num_cols * 3, num_rows * 3))
@@ -187,8 +218,18 @@ def generate_images(
                 if col_idx == 0:
                     ax.set_ylabel(f'Seed {seeds[row_idx]}', fontsize=12, rotation=0, labelpad=40, va='center')
 
+        # Add overall title
+        style_type = "all styles"
+        if start_idx <= 8 and end_idx <= 8:
+            style_type = "coarse styles (pose, face shape)"
+        elif start_idx >= 4 and end_idx <= 12:
+            style_type = "middle styles (facial features)"
+        elif start_idx >= 12:
+            style_type = "fine styles (color, microstructure)"
+        fig.suptitle(f'Weight Vector Applied to Blocks {start_idx}-{end_idx} ({style_type})', fontsize=14, y=1.0)
+
         plt.tight_layout()
-        composite_path = f'{outdir}/composite_grid.png'
+        composite_path = f'{outdir}/composite_grid_styles{start_idx}-{end_idx}.png'
         plt.savefig(composite_path, dpi=150, bbox_inches='tight')
         plt.close()
         print(f'Composite image saved to {composite_path}')
