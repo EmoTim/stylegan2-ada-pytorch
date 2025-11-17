@@ -13,8 +13,6 @@ import argparse
 import numpy as np
 import matplotlib.pyplot as plt
 from PIL import Image
-from scipy import stats
-from skimage import color
 import seaborn as sns
 
 
@@ -55,15 +53,8 @@ def load_images_by_style_range(image_dir: str, pattern: str = "seed*_alpha*_styl
     return images
 
 
-def rgb_to_lab(image: np.ndarray) -> np.ndarray:
-    """Convert RGB image to LAB color space."""
-    img_normalized = image.astype(np.float32) / 255.0
-    lab = color.rgb2lab(img_normalized)
-    return lab
-
-
 def compute_color_statistics(image: np.ndarray) -> dict:
-    """Compute comprehensive color statistics for an image."""
+    """Compute RGB color statistics for an image."""
     stats_dict = {}
 
     # RGB statistics
@@ -72,25 +63,10 @@ def compute_color_statistics(image: np.ndarray) -> dict:
         stats_dict[f'rgb_{channel}_mean'] = np.mean(channel_data)
         stats_dict[f'rgb_{channel}_std'] = np.std(channel_data)
 
-    # LAB statistics
-    lab = rgb_to_lab(image)
-    for i, channel in enumerate(['L', 'A', 'B']):
-        channel_data = lab[:, :, i].flatten()
-        stats_dict[f'lab_{channel}_mean'] = np.mean(channel_data)
-        stats_dict[f'lab_{channel}_std'] = np.std(channel_data)
-
     # Overall statistics
     stats_dict['overall_brightness'] = np.mean(image)
 
     return stats_dict
-
-
-def compute_delta_e(img1: np.ndarray, img2: np.ndarray) -> float:
-    """Compute average Delta E (CIE76) between two images."""
-    lab1 = rgb_to_lab(img1)
-    lab2 = rgb_to_lab(img2)
-    delta_e = np.sqrt(np.sum((lab1 - lab2) ** 2, axis=2))
-    return np.mean(delta_e)
 
 
 def analyze_style_range_data(style_range_data: dict, reference_alpha: int = 0) -> dict:
@@ -114,9 +90,7 @@ def analyze_style_range_data(style_range_data: dict, reference_alpha: int = 0) -
 
     results = {
         'alphas': alphas,
-        'delta_e': [],
         'rgb_mean_shift': [],
-        'lab_mean_shift': [],
         'brightness_shift': [],
         'rgb_R_mean': [],
         'rgb_G_mean': [],
@@ -124,20 +98,14 @@ def analyze_style_range_data(style_range_data: dict, reference_alpha: int = 0) -
         'rgb_R_std': [],
         'rgb_G_std': [],
         'rgb_B_std': [],
-        'lab_L_mean': [],
-        'lab_A_mean': [],
-        'lab_B_mean': [],
     }
 
     # For each alpha, aggregate across all seeds
     for alpha in alphas:
-        alpha_delta_e = []
         alpha_rgb_shift = []
-        alpha_lab_shift = []
         alpha_brightness_shift = []
         alpha_stats = {key: [] for key in ['rgb_R_mean', 'rgb_G_mean', 'rgb_B_mean',
-                                             'rgb_R_std', 'rgb_G_std', 'rgb_B_std',
-                                             'lab_L_mean', 'lab_A_mean', 'lab_B_mean']}
+                                             'rgb_R_std', 'rgb_G_std', 'rgb_B_std']}
 
         for seed, seed_data in style_range_data.items():
             img = seed_data[alpha]['image']
@@ -147,10 +115,6 @@ def analyze_style_range_data(style_range_data: dict, reference_alpha: int = 0) -
             stats_current = compute_color_statistics(img)
             stats_ref = compute_color_statistics(ref_img)
 
-            # Delta E
-            delta_e = compute_delta_e(ref_img, img)
-            alpha_delta_e.append(delta_e)
-
             # RGB mean shift
             rgb_shift = np.sqrt(
                 (stats_current['rgb_R_mean'] - stats_ref['rgb_R_mean'])**2 +
@@ -158,14 +122,6 @@ def analyze_style_range_data(style_range_data: dict, reference_alpha: int = 0) -
                 (stats_current['rgb_B_mean'] - stats_ref['rgb_B_mean'])**2
             )
             alpha_rgb_shift.append(rgb_shift)
-
-            # LAB mean shift
-            lab_shift = np.sqrt(
-                (stats_current['lab_L_mean'] - stats_ref['lab_L_mean'])**2 +
-                (stats_current['lab_A_mean'] - stats_ref['lab_A_mean'])**2 +
-                (stats_current['lab_B_mean'] - stats_ref['lab_B_mean'])**2
-            )
-            alpha_lab_shift.append(lab_shift)
 
             # Brightness shift
             brightness_shift = abs(stats_current['overall_brightness'] - stats_ref['overall_brightness'])
@@ -176,9 +132,7 @@ def analyze_style_range_data(style_range_data: dict, reference_alpha: int = 0) -
                 alpha_stats[key].append(stats_current[key])
 
         # Average across seeds
-        results['delta_e'].append(np.mean(alpha_delta_e))
         results['rgb_mean_shift'].append(np.mean(alpha_rgb_shift))
-        results['lab_mean_shift'].append(np.mean(alpha_lab_shift))
         results['brightness_shift'].append(np.mean(alpha_brightness_shift))
 
         for key in alpha_stats.keys():
@@ -224,25 +178,11 @@ def plot_comparison_by_style_range(all_results: dict, output_dir: str):
     alphas = next(iter(all_results.values()))['alphas']
     ref_idx = min(range(len(alphas)), key=lambda i: abs(alphas[i]))
 
-    # 1. Overview plot with 4 key metrics
-    fig, axes = plt.subplots(2, 2, figsize=(14, 10))
+    # 1. Overview plot with 2 key metrics
+    fig, axes = plt.subplots(1, 2, figsize=(14, 5))
 
-    # Plot 1: Delta E
-    ax = axes[0, 0]
-    for style_range in sorted(all_results.keys()):
-        results = all_results[style_range]
-        label = get_style_range_label(style_range)
-        ax.plot(results['alphas'], results['delta_e'],
-                marker='o', linewidth=2, label=label, color=style_colors[style_range])
-    ax.set_xlabel('Alpha', fontsize=12)
-    ax.set_ylabel('Delta E (Perceptual Color Difference)', fontsize=12)
-    ax.set_title('Perceptual Color Difference vs Alpha', fontsize=14, fontweight='bold')
-    ax.legend()
-    ax.grid(True, alpha=0.3)
-    ax.axhline(y=0, color='black', linestyle='-', alpha=0.3, linewidth=1)
-
-    # Plot 2: RGB Mean Shift
-    ax = axes[0, 1]
+    # Plot 1: RGB Mean Shift
+    ax = axes[0]
     for style_range in sorted(all_results.keys()):
         results = all_results[style_range]
         label = get_style_range_label(style_range)
@@ -255,22 +195,8 @@ def plot_comparison_by_style_range(all_results: dict, output_dir: str):
     ax.grid(True, alpha=0.3)
     ax.axhline(y=0, color='black', linestyle='-', alpha=0.3, linewidth=1)
 
-    # Plot 3: LAB Mean Shift
-    ax = axes[1, 0]
-    for style_range in sorted(all_results.keys()):
-        results = all_results[style_range]
-        label = get_style_range_label(style_range)
-        ax.plot(results['alphas'], results['lab_mean_shift'],
-                marker='^', linewidth=2, label=label, color=style_colors[style_range])
-    ax.set_xlabel('Alpha', fontsize=12)
-    ax.set_ylabel('LAB Mean Shift', fontsize=12)
-    ax.set_title('LAB Color Space Shift vs Alpha', fontsize=14, fontweight='bold')
-    ax.legend()
-    ax.grid(True, alpha=0.3)
-    ax.axhline(y=0, color='black', linestyle='-', alpha=0.3, linewidth=1)
-
-    # Plot 4: Brightness Shift
-    ax = axes[1, 1]
+    # Plot 2: Brightness Shift
+    ax = axes[1]
     for style_range in sorted(all_results.keys()):
         results = all_results[style_range]
         label = get_style_range_label(style_range)
@@ -358,44 +284,13 @@ def plot_comparison_by_style_range(all_results: dict, output_dir: str):
     plt.savefig(output_dir / 'rgb_analysis_by_style_range.png', dpi=150, bbox_inches='tight')
     plt.close()
 
-    # 3. LAB channel analysis - individual channels as % change
-    fig, axes = plt.subplots(1, 3, figsize=(18, 5))
-
-    lab_channels = ['L', 'A', 'B']
-    lab_names = ['Lightness (L)', 'Green-Red (a*)', 'Blue-Yellow (b*)']
-    lab_colors = {'L': '#FFB703', 'A': '#06D6A0', 'B': '#118AB2'}
-
-    for col_idx, (channel, name) in enumerate(zip(lab_channels, lab_names)):
-        ax = axes[col_idx]
-        for style_range in sorted(all_results.keys()):
-            results = all_results[style_range]
-            label = get_style_range_label(style_range)
-            vals = np.array(results[f'lab_{channel}_mean'])
-            ref_val = vals[ref_idx]
-            pct_change = (vals / ref_val - 1) * 100
-            ax.plot(results['alphas'], pct_change,
-                    marker='o', linewidth=2, label=label, color=style_colors[style_range])
-
-        ax.set_xlabel('Alpha', fontsize=11)
-        ax.set_ylabel(f'{name} Change (%)', fontsize=11)
-        ax.set_title(f'{name} vs Alpha', fontsize=12, fontweight='bold', color=lab_colors[channel])
-        ax.legend(fontsize=9)
-        ax.grid(True, alpha=0.3)
-        ax.axhline(y=0, color='black', linestyle='-', alpha=0.3, linewidth=1)
-
-    plt.suptitle('LAB Color Space by Style Range (% Change)',
-                 fontsize=16, y=0.995, fontweight='bold')
-    plt.tight_layout()
-    plt.savefig(output_dir / 'lab_analysis_by_style_range.png', dpi=150, bbox_inches='tight')
-    plt.close()
-
     print(f'\nComparison plots saved to {output_dir}/')
 
 
 def print_summary_statistics(all_results: dict):
-    """Print summary statistics about color shifts for each style range."""
+    """Print summary statistics about RGB color shifts for each style range."""
     print("\n" + "="*70)
-    print("COLOR SHIFT COMPARISON BY STYLE RANGE")
+    print("RGB COLOR SHIFT COMPARISON BY STYLE RANGE")
     print("="*70)
 
     for style_range in sorted(all_results.keys()):
@@ -404,16 +299,8 @@ def print_summary_statistics(all_results: dict):
 
         print(f"\n{label}:")
         print(f"  Alpha range: {min(results['alphas'])} to {max(results['alphas'])}")
-        print(f"  Max Delta E: {max(results['delta_e']):.2f}")
         print(f"  Max RGB shift: {max(results['rgb_mean_shift']):.2f}")
-        print(f"  Max LAB shift: {max(results['lab_mean_shift']):.2f}")
         print(f"  Max brightness shift: {max(results['brightness_shift']):.2f}")
-
-        # Linear correlation
-        alphas_arr = np.array(results['alphas'])
-        delta_e_arr = np.array(results['delta_e'])
-        slope, intercept, r_value, p_value, std_err = stats.linregress(alphas_arr, delta_e_arr)
-        print(f"  Delta E vs Alpha correlation: R² = {r_value**2:.3f}")
 
     print("\n" + "="*70)
 
