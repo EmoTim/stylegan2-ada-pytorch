@@ -184,9 +184,79 @@ def analyze_seed_images(seed_data: Dict, reference_alpha: int = 0) -> Dict:
     return results
 
 
+def aggregate_results(all_results: Dict) -> Dict:
+    """
+    Aggregate results across all seeds (mean and std).
+
+    Args:
+        all_results: Dict mapping seed -> analysis results
+
+    Returns:
+        Dict with averaged results and standard deviations
+    """
+    # Get alphas (should be same for all seeds)
+    alphas = next(iter(all_results.values()))['alphas']
+    num_alphas = len(alphas)
+
+    # Initialize aggregated results
+    aggregated = {
+        'alphas': alphas,
+        'delta_e_mean': np.zeros(num_alphas),
+        'delta_e_std': np.zeros(num_alphas),
+        'rgb_mean_shift_mean': np.zeros(num_alphas),
+        'rgb_mean_shift_std': np.zeros(num_alphas),
+        'lab_mean_shift_mean': np.zeros(num_alphas),
+        'lab_mean_shift_std': np.zeros(num_alphas),
+        'brightness_shift_mean': np.zeros(num_alphas),
+        'brightness_shift_std': np.zeros(num_alphas),
+    }
+
+    # Aggregate color stats
+    stat_keys = ['rgb_R_mean', 'rgb_G_mean', 'rgb_B_mean',
+                 'rgb_R_std', 'rgb_G_std', 'rgb_B_std',
+                 'lab_L_mean', 'lab_A_mean', 'lab_B_mean']
+
+    for key in stat_keys:
+        aggregated[f'{key}_mean'] = np.zeros(num_alphas)
+        aggregated[f'{key}_std'] = np.zeros(num_alphas)
+
+    # Collect values across seeds
+    for alpha_idx in range(num_alphas):
+        delta_e_values = []
+        rgb_shift_values = []
+        lab_shift_values = []
+        brightness_shift_values = []
+        stat_values = {key: [] for key in stat_keys}
+
+        for seed, results in all_results.items():
+            delta_e_values.append(results['delta_e'][alpha_idx])
+            rgb_shift_values.append(results['rgb_mean_shift'][alpha_idx])
+            lab_shift_values.append(results['lab_mean_shift'][alpha_idx])
+            brightness_shift_values.append(results['brightness_shift'][alpha_idx])
+
+            for key in stat_keys:
+                stat_values[key].append(results['color_stats'][alpha_idx][key])
+
+        # Compute mean and std
+        aggregated['delta_e_mean'][alpha_idx] = np.mean(delta_e_values)
+        aggregated['delta_e_std'][alpha_idx] = np.std(delta_e_values)
+        aggregated['rgb_mean_shift_mean'][alpha_idx] = np.mean(rgb_shift_values)
+        aggregated['rgb_mean_shift_std'][alpha_idx] = np.std(rgb_shift_values)
+        aggregated['lab_mean_shift_mean'][alpha_idx] = np.mean(lab_shift_values)
+        aggregated['lab_mean_shift_std'][alpha_idx] = np.std(lab_shift_values)
+        aggregated['brightness_shift_mean'][alpha_idx] = np.mean(brightness_shift_values)
+        aggregated['brightness_shift_std'][alpha_idx] = np.std(brightness_shift_values)
+
+        for key in stat_keys:
+            aggregated[f'{key}_mean'][alpha_idx] = np.mean(stat_values[key])
+            aggregated[f'{key}_std'][alpha_idx] = np.std(stat_values[key])
+
+    return aggregated
+
+
 def plot_color_analysis(all_results: Dict, output_dir: str, style_range: Tuple[int, int]):
     """
-    Create comprehensive visualization of color analysis.
+    Create comprehensive visualization of color analysis (averaged across seeds).
 
     Args:
         all_results: Dict mapping seed -> analysis results
@@ -196,107 +266,136 @@ def plot_color_analysis(all_results: Dict, output_dir: str, style_range: Tuple[i
     output_dir = Path(output_dir)
     output_dir.mkdir(exist_ok=True)
 
+    # Aggregate results across seeds
+    agg = aggregate_results(all_results)
+    alphas = agg['alphas']
+
     # Set style
     sns.set_style("whitegrid")
 
-    # 1. Delta E vs Alpha (perceptual color difference)
+    # 1. Overview plot with 4 key metrics
     fig, axes = plt.subplots(2, 2, figsize=(14, 10))
 
     # Plot 1: Delta E
     ax = axes[0, 0]
-    for seed, results in all_results.items():
-        ax.plot(results['alphas'], results['delta_e'], marker='o', label=f'Seed {seed}', alpha=0.7)
+    ax.plot(alphas, agg['delta_e_mean'], marker='o', linewidth=2, color='#2E86AB', label='Mean')
+    ax.fill_between(alphas,
+                     agg['delta_e_mean'] - agg['delta_e_std'],
+                     agg['delta_e_mean'] + agg['delta_e_std'],
+                     alpha=0.3, color='#2E86AB', label='±1 Std')
     ax.set_xlabel('Alpha', fontsize=12)
     ax.set_ylabel('Delta E (Perceptual Color Difference)', fontsize=12)
-    ax.set_title('Perceptual Color Difference vs Alpha', fontsize=14)
+    ax.set_title('Perceptual Color Difference vs Alpha', fontsize=14, fontweight='bold')
     ax.legend()
     ax.grid(True, alpha=0.3)
+    ax.axhline(y=2, color='orange', linestyle='--', alpha=0.5, label='Perceptible threshold')
 
     # Plot 2: RGB Mean Shift
     ax = axes[0, 1]
-    for seed, results in all_results.items():
-        ax.plot(results['alphas'], results['rgb_mean_shift'], marker='s', label=f'Seed {seed}', alpha=0.7)
+    ax.plot(alphas, agg['rgb_mean_shift_mean'], marker='s', linewidth=2, color='#A23B72', label='Mean')
+    ax.fill_between(alphas,
+                     agg['rgb_mean_shift_mean'] - agg['rgb_mean_shift_std'],
+                     agg['rgb_mean_shift_mean'] + agg['rgb_mean_shift_std'],
+                     alpha=0.3, color='#A23B72', label='±1 Std')
     ax.set_xlabel('Alpha', fontsize=12)
     ax.set_ylabel('RGB Mean Shift (Euclidean)', fontsize=12)
-    ax.set_title('RGB Color Mean Shift vs Alpha', fontsize=14)
+    ax.set_title('RGB Color Mean Shift vs Alpha', fontsize=14, fontweight='bold')
     ax.legend()
     ax.grid(True, alpha=0.3)
 
     # Plot 3: LAB Mean Shift
     ax = axes[1, 0]
-    for seed, results in all_results.items():
-        ax.plot(results['alphas'], results['lab_mean_shift'], marker='^', label=f'Seed {seed}', alpha=0.7)
+    ax.plot(alphas, agg['lab_mean_shift_mean'], marker='^', linewidth=2, color='#F18F01', label='Mean')
+    ax.fill_between(alphas,
+                     agg['lab_mean_shift_mean'] - agg['lab_mean_shift_std'],
+                     agg['lab_mean_shift_mean'] + agg['lab_mean_shift_std'],
+                     alpha=0.3, color='#F18F01', label='±1 Std')
     ax.set_xlabel('Alpha', fontsize=12)
     ax.set_ylabel('LAB Mean Shift', fontsize=12)
-    ax.set_title('LAB Color Space Shift vs Alpha', fontsize=14)
+    ax.set_title('LAB Color Space Shift vs Alpha', fontsize=14, fontweight='bold')
     ax.legend()
     ax.grid(True, alpha=0.3)
 
     # Plot 4: Brightness Shift
     ax = axes[1, 1]
-    for seed, results in all_results.items():
-        ax.plot(results['alphas'], results['brightness_shift'], marker='d', label=f'Seed {seed}', alpha=0.7)
+    ax.plot(alphas, agg['brightness_shift_mean'], marker='d', linewidth=2, color='#C73E1D', label='Mean')
+    ax.fill_between(alphas,
+                     agg['brightness_shift_mean'] - agg['brightness_shift_std'],
+                     agg['brightness_shift_mean'] + agg['brightness_shift_std'],
+                     alpha=0.3, color='#C73E1D', label='±1 Std')
     ax.set_xlabel('Alpha', fontsize=12)
     ax.set_ylabel('Brightness Shift', fontsize=12)
-    ax.set_title('Overall Brightness Change vs Alpha', fontsize=14)
+    ax.set_title('Overall Brightness Change vs Alpha', fontsize=14, fontweight='bold')
     ax.legend()
     ax.grid(True, alpha=0.3)
 
-    plt.suptitle(f'Color Analysis - Style Blocks {style_range[0]}-{style_range[1]}', fontsize=16, y=1.00)
+    plt.suptitle(f'Color Analysis (Averaged Across Seeds) - Style Blocks {style_range[0]}-{style_range[1]}',
+                 fontsize=16, y=0.995, fontweight='bold')
     plt.tight_layout()
     plt.savefig(output_dir / f'color_analysis_overview_styles{style_range[0]}-{style_range[1]}.png', dpi=150, bbox_inches='tight')
     plt.close()
 
-    # 2. Per-channel RGB statistics
-    fig, axes = plt.subplots(2, 3, figsize=(18, 10))
+    # 2. RGB Channel Analysis - Combined plot
+    fig, axes = plt.subplots(1, 2, figsize=(16, 6))
 
-    channels = ['R', 'G', 'B']
-    for idx, channel in enumerate(channels):
-        # Mean
-        ax = axes[0, idx]
-        for seed, results in all_results.items():
-            means = [stats[f'rgb_{channel}_mean'] for stats in results['color_stats']]
-            ax.plot(results['alphas'], means, marker='o', label=f'Seed {seed}', alpha=0.7)
-        ax.set_xlabel('Alpha', fontsize=11)
-        ax.set_ylabel(f'{channel} Channel Mean', fontsize=11)
-        ax.set_title(f'{channel} Channel Mean vs Alpha', fontsize=12)
-        ax.legend()
-        ax.grid(True, alpha=0.3)
+    colors = {'R': '#E63946', 'G': '#06D6A0', 'B': '#118AB2'}
 
-        # Std
-        ax = axes[1, idx]
-        for seed, results in all_results.items():
-            stds = [stats[f'rgb_{channel}_std'] for stats in results['color_stats']]
-            ax.plot(results['alphas'], stds, marker='s', label=f'Seed {seed}', alpha=0.7)
-        ax.set_xlabel('Alpha', fontsize=11)
-        ax.set_ylabel(f'{channel} Channel Std Dev', fontsize=11)
-        ax.set_title(f'{channel} Channel Variation vs Alpha', fontsize=12)
-        ax.legend()
-        ax.grid(True, alpha=0.3)
+    # Mean plot
+    ax = axes[0]
+    for channel in ['R', 'G', 'B']:
+        mean_vals = agg[f'rgb_{channel}_mean_mean']
+        std_vals = agg[f'rgb_{channel}_mean_std']
+        ax.plot(alphas, mean_vals, marker='o', linewidth=2, color=colors[channel], label=f'{channel} channel')
+        ax.fill_between(alphas, mean_vals - std_vals, mean_vals + std_vals,
+                        alpha=0.2, color=colors[channel])
+    ax.set_xlabel('Alpha', fontsize=12)
+    ax.set_ylabel('Channel Mean Value', fontsize=12)
+    ax.set_title('RGB Channel Means vs Alpha', fontsize=14, fontweight='bold')
+    ax.legend()
+    ax.grid(True, alpha=0.3)
 
-    plt.suptitle(f'RGB Channel Statistics - Style Blocks {style_range[0]}-{style_range[1]}', fontsize=16, y=1.00)
+    # Std plot
+    ax = axes[1]
+    for channel in ['R', 'G', 'B']:
+        mean_vals = agg[f'rgb_{channel}_std_mean']
+        std_vals = agg[f'rgb_{channel}_std_std']
+        ax.plot(alphas, mean_vals, marker='s', linewidth=2, color=colors[channel], label=f'{channel} channel')
+        ax.fill_between(alphas, mean_vals - std_vals, mean_vals + std_vals,
+                        alpha=0.2, color=colors[channel])
+    ax.set_xlabel('Alpha', fontsize=12)
+    ax.set_ylabel('Channel Std Dev', fontsize=12)
+    ax.set_title('RGB Channel Variation vs Alpha', fontsize=14, fontweight='bold')
+    ax.legend()
+    ax.grid(True, alpha=0.3)
+
+    plt.suptitle(f'RGB Channel Statistics (Averaged) - Style Blocks {style_range[0]}-{style_range[1]}',
+                 fontsize=16, y=0.995, fontweight='bold')
     plt.tight_layout()
     plt.savefig(output_dir / f'rgb_channel_analysis_styles{style_range[0]}-{style_range[1]}.png', dpi=150, bbox_inches='tight')
     plt.close()
 
-    # 3. LAB channel analysis
-    fig, axes = plt.subplots(1, 3, figsize=(18, 5))
+    # 3. LAB channel analysis - Combined plot
+    fig, ax = plt.subplots(1, 1, figsize=(12, 6))
 
     lab_channels = ['L', 'A', 'B']
-    lab_names = ['Lightness', 'Green-Red', 'Blue-Yellow']
+    lab_names = ['Lightness', 'Green-Red (a*)', 'Blue-Yellow (b*)']
+    lab_colors = ['#FFB703', '#06D6A0', '#118AB2']
 
-    for idx, (channel, name) in enumerate(zip(lab_channels, lab_names)):
-        ax = axes[idx]
-        for seed, results in all_results.items():
-            means = [stats[f'lab_{channel}_mean'] for stats in results['color_stats']]
-            ax.plot(results['alphas'], means, marker='o', label=f'Seed {seed}', alpha=0.7)
-        ax.set_xlabel('Alpha', fontsize=11)
-        ax.set_ylabel(f'{channel} Channel Mean', fontsize=11)
-        ax.set_title(f'LAB {name} vs Alpha', fontsize=12)
-        ax.legend()
-        ax.grid(True, alpha=0.3)
+    for channel, name, plot_color in zip(lab_channels, lab_names, lab_colors):
+        mean_vals = agg[f'lab_{channel}_mean_mean']
+        std_vals = agg[f'lab_{channel}_mean_std']
+        ax.plot(alphas, mean_vals, marker='o', linewidth=2, color=plot_color, label=name)
+        ax.fill_between(alphas, mean_vals - std_vals, mean_vals + std_vals,
+                        alpha=0.2, color=plot_color)
 
-    plt.suptitle(f'LAB Color Space Analysis - Style Blocks {style_range[0]}-{style_range[1]}', fontsize=16, y=1.02)
+    ax.set_xlabel('Alpha', fontsize=12)
+    ax.set_ylabel('LAB Channel Mean', fontsize=12)
+    ax.set_title('LAB Color Space Analysis vs Alpha', fontsize=14, fontweight='bold')
+    ax.legend()
+    ax.grid(True, alpha=0.3)
+
+    plt.suptitle(f'LAB Color Space (Averaged) - Style Blocks {style_range[0]}-{style_range[1]}',
+                 fontsize=16, y=0.995, fontweight='bold')
     plt.tight_layout()
     plt.savefig(output_dir / f'lab_analysis_styles{style_range[0]}-{style_range[1]}.png', dpi=150, bbox_inches='tight')
     plt.close()
