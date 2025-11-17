@@ -68,7 +68,7 @@ def compute_color_statistics(image: np.ndarray) -> Dict:
     Compute comprehensive color statistics for an image.
 
     Returns dict with:
-        - RGB mean, std, skewness, kurtosis per channel
+        - RGB mean, std, skewness per channel
         - LAB mean, std per channel
         - Overall luminance statistics
     """
@@ -80,7 +80,6 @@ def compute_color_statistics(image: np.ndarray) -> Dict:
         stats_dict[f'rgb_{channel}_mean'] = np.mean(channel_data)
         stats_dict[f'rgb_{channel}_std'] = np.std(channel_data)
         stats_dict[f'rgb_{channel}_skewness'] = stats.skew(channel_data)
-        stats_dict[f'rgb_{channel}_kurtosis'] = stats.kurtosis(channel_data)
 
     # LAB statistics
     lab = rgb_to_lab(image)
