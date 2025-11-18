@@ -115,7 +115,7 @@ def analyze_style_range_data(style_range_data: dict, reference_alpha: int = 0) -
             )
             alpha_rgb_shift.append(rgb_shift)
 
-            brightness_shift = abs(stats_current['overall_brightness'] - stats_ref['overall_brightness'])
+            brightness_shift = stats_current['overall_brightness'] - stats_ref['overall_brightness']
             alpha_brightness_shift.append(brightness_shift)
 
             for key in alpha_stats.keys():
