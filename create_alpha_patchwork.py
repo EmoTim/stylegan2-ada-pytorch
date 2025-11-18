@@ -36,7 +36,7 @@ def get_images_from_dir(dir_path, max_images=25):
     """Get up to max_images PNG files from a directory."""
     images = []
     for file in sorted(os.listdir(dir_path)):
-        if file.endswith('.png'):
+        if file.endswith(".png"):
             images.append(os.path.join(dir_path, file))
             if len(images) >= max_images:
                 break
@@ -53,12 +53,12 @@ def create_grid_from_images(image_paths, grid_size=5):
     img_width, img_height = first_img.size
 
     # Create a blank canvas for the grid
-    grid_img = Image.new('RGB',
-                         (img_width * grid_size, img_height * grid_size),
-                         color='black')
+    grid_img = Image.new(
+        "RGB", (img_width * grid_size, img_height * grid_size), color="black"
+    )
 
     # Place images in grid
-    for idx, img_path in enumerate(image_paths[:grid_size * grid_size]):
+    for idx, img_path in enumerate(image_paths[: grid_size * grid_size]):
         if idx >= grid_size * grid_size:
             break
 
@@ -73,42 +73,44 @@ def create_grid_from_images(image_paths, grid_size=5):
 
 @click.command()
 @click.option(
-    '--input-dir',
+    "--input-dir",
     type=click.Path(exists=True),
     required=True,
-    help='Directory containing alpha_* subdirectories with generated images'
+    help="Directory containing alpha_* subdirectories with generated images",
 )
 @click.option(
-    '--output-path',
+    "--output-path",
     type=click.Path(),
     required=True,
-    help='Output path for the patchwork image'
+    help="Output path for the patchwork image",
 )
 @click.option(
-    '--images-per-alpha',
+    "--images-per-alpha",
     type=int,
     default=25,
-    help='Number of images to sample per alpha value (default: 25)'
+    help="Number of images to sample per alpha value (default: 25)",
 )
 @click.option(
-    '--grid-size',
+    "--grid-size",
     type=int,
     default=5,
-    help='Size of the grid for each alpha patch (default: 5x5)'
+    help="Size of the grid for each alpha patch (default: 5x5)",
 )
 @click.option(
-    '--max-alphas',
+    "--max-alphas",
     type=int,
     default=25,
-    help='Maximum number of alpha values to include (default: 25)'
+    help="Maximum number of alpha values to include (default: 25)",
 )
 @click.option(
-    '--patchwork-cols',
+    "--patchwork-cols",
     type=int,
     default=5,
-    help='Number of columns in the main patchwork grid (default: 5)'
+    help="Number of columns in the main patchwork grid (default: 5)",
 )
-def create_patchwork(input_dir, output_path, images_per_alpha, grid_size, max_alphas, patchwork_cols):
+def create_patchwork(
+    input_dir, output_path, images_per_alpha, grid_size, max_alphas, patchwork_cols
+):
     """Create a patchwork visualization of images across different alpha values."""
 
     print(f"Scanning directory: {input_dir}")
@@ -135,7 +137,9 @@ def create_patchwork(input_dir, output_path, images_per_alpha, grid_size, max_al
         image_paths = get_images_from_dir(alpha_path, max_images=images_per_alpha)
 
         if len(image_paths) < images_per_alpha:
-            print(f"  Warning: Only found {len(image_paths)} images (expected {images_per_alpha})")
+            print(
+                f"  Warning: Only found {len(image_paths)} images (expected {images_per_alpha})"
+            )
 
         if not image_paths:
             print(f"  Skipping alpha={alpha_value} (no images found)")
@@ -146,7 +150,9 @@ def create_patchwork(input_dir, output_path, images_per_alpha, grid_size, max_al
         if grid:
             alpha_grids.append(grid)
             alpha_values.append(alpha_value)
-            print(f"  Created {grid_size}x{grid_size} grid with {len(image_paths)} images")
+            print(
+                f"  Created {grid_size}x{grid_size} grid with {len(image_paths)} images"
+            )
 
     if not alpha_grids:
         print("No grids created. Exiting.")
@@ -164,8 +170,9 @@ def create_patchwork(input_dir, output_path, images_per_alpha, grid_size, max_al
     fig_width = patchwork_cols * 4
     fig_height = patchwork_rows * 4
 
-    fig, axes = plt.subplots(patchwork_rows, patchwork_cols,
-                            figsize=(fig_width, fig_height))
+    fig, axes = plt.subplots(
+        patchwork_rows, patchwork_cols, figsize=(fig_width, fig_height)
+    )
 
     # Handle case where there's only one row or column
     if patchwork_rows == 1 and patchwork_cols == 1:
@@ -182,22 +189,26 @@ def create_patchwork(input_dir, output_path, images_per_alpha, grid_size, max_al
 
         ax = axes[row, col]
         ax.imshow(grid)
-        ax.set_title(f'α = {alpha_val}', fontsize=14, fontweight='bold')
-        ax.axis('off')
+        ax.set_title(f"α = {alpha_val}", fontsize=14, fontweight="bold")
+        ax.axis("off")
 
     # Hide unused subplots
     for idx in range(len(alpha_grids), patchwork_rows * patchwork_cols):
         row = idx // patchwork_cols
         col = idx % patchwork_cols
-        axes[row, col].axis('off')
+        axes[row, col].axis("off")
 
-    plt.suptitle(f'Alpha Value Patchwork ({grid_size}×{grid_size} images per alpha)',
-                 fontsize=16, fontweight='bold', y=0.995)
+    plt.suptitle(
+        f"Alpha Value Patchwork ({grid_size}×{grid_size} images per alpha)",
+        fontsize=16,
+        fontweight="bold",
+        y=0.995,
+    )
     plt.tight_layout()
 
     # Save the figure
     print(f"Saving patchwork to: {output_path}")
-    plt.savefig(output_path, dpi=150, bbox_inches='tight')
+    plt.savefig(output_path, dpi=150, bbox_inches="tight")
     plt.close()
 
     print(f"✓ Patchwork created successfully!")
@@ -206,5 +217,5 @@ def create_patchwork(input_dir, output_path, images_per_alpha, grid_size, max_al
     print(f"  - {patchwork_rows}×{patchwork_cols} patchwork grid")
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     create_patchwork()
