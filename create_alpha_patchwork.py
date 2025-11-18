@@ -163,9 +163,6 @@ def create_patchwork(
     # Calculate patchwork dimensions
     patchwork_rows = (len(alpha_grids) + patchwork_cols - 1) // patchwork_cols
 
-    # Get dimensions of a single grid
-    grid_width, grid_height = alpha_grids[0].size
-
     # Create final patchwork with matplotlib for better control and labels
     fig_width = patchwork_cols * 4
     fig_height = patchwork_rows * 4
