@@ -9,6 +9,7 @@
 """Generate images using pretrained network pickle."""
 
 import os
+import re
 from typing import List, Optional
 
 import click
@@ -24,22 +25,25 @@ from age_estimator import AgeEstimator
 # ----------------------------------------------------------------------------
 
 
+def float_range(s: str) -> List[float]:
+
+    parts = s.split(":")
+    if len(parts) == 3:
+        start, stop, num = float(parts[0]), float(parts[1]), int(parts[2])
+        return list(np.round(np.linspace(start, stop, num), decimals=1))
+    else:
+        raise ValueError(
+            f"Linspace format requires exactly 3 values (start:stop:num), got {len(parts)}"
+        )
+    
 def num_range(s: str) -> List[int]:
-    """Accept either 'start:stop:num' for linspace or comma separated list 'a,b,c,...' for explicit values."""
+    '''Accept either a comma separated list of numbers 'a,b,c' or a range 'a-c' and return as a list of ints.'''
 
-    # Check if it's linspace format (colon-separated: start:stop:num)
-    if ":" in s:
-        parts = s.split(":")
-        if len(parts) == 3:
-            start, stop, num = float(parts[0]), float(parts[1]), int(parts[2])
-            return list(np.linspace(start, stop, num).astype(int))
-        else:
-            raise ValueError(
-                f"Linspace format requires exactly 3 values (start:stop:num), got {len(parts)}"
-            )
-
-    # Otherwise treat as comma-separated list
-    vals = s.split(",")
+    range_re = re.compile(r'^(\d+)-(\d+)$')
+    m = range_re.match(s)
+    if m:
+        return list(range(int(m.group(1)), int(m.group(2))+1))
+    vals = s.split(',')
     return [int(x) for x in vals]
 
 
@@ -87,7 +91,7 @@ def num_range(s: str) -> List[int]:
 )
 @click.option(
     "--alphas",
-    type=num_range,
+    type=float_range,
     help='Alpha values for weight modulation (e.g., "-10,0,10" or "-10-10")',
     default="-5, -2, -1, 0, 1, 2, 5",
     show_default=True,
@@ -99,6 +103,14 @@ def num_range(s: str) -> List[int]:
     default=(0, 17),
     show_default=True,
 )
+@click.option(
+    "--create-composite",
+    type=bool,
+    help="Bolean to create or not a composite grid of the generated images",
+    default=False,
+    show_default=True,
+)
+
 def generate_images(
     ctx: click.Context,
     network_pkl: str,
@@ -111,6 +123,7 @@ def generate_images(
     weight_vector: Optional[str],
     alphas: List[int],
     style_range: tuple,
+    create_composite: bool = False
 ):
     """Generate images using pretrained network pickle.
 
@@ -287,7 +300,7 @@ def generate_images(
             )
 
     # Create composite image if weight modulation was used
-    if weight_vec is not None and len(all_images) > 0:
+    if create_composite and weight_vec is not None and len(all_images) > 0:
         print("Creating composite image...")
         num_rows = len(all_images)
         num_cols = len(alphas)
