@@ -204,7 +204,7 @@ def create_patchwork(
     plt.tight_layout()
 
     # Save the figure
-    print(f"Saving patchwork to: {output_path}")
+    print(f"Saving patchwork to: {output_path}/alpha_patch_work")
     plt.savefig(output_path, dpi=150, bbox_inches="tight")
     plt.close()
 
