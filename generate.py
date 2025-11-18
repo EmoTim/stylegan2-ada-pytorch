@@ -19,6 +19,7 @@ import torch
 import matplotlib.pyplot as plt
 
 import legacy
+from age_estimator import AgeEstimator
 
 # ----------------------------------------------------------------------------
 
@@ -211,6 +212,12 @@ def generate_images(
             f"Applying weight vector to style blocks {start_idx} to {end_idx} (inclusive)"
         )
 
+    # Initialize age estimator if using weight vector
+    age_estimator = None
+    if weight_vector is not None:
+        print("Initializing age estimator...")
+        age_estimator = AgeEstimator(ctx_id=0, det_size=(1024, 1024))
+
     # Generate images.
     all_images = []  # Store images for composite: list of lists (one per seed)
 
@@ -220,9 +227,31 @@ def generate_images(
         w = G.mapping(z, label)
 
         if weight_vec is not None:
-            # Generate images with weight modulation
-            seed_images = []
             start_idx, end_idx = style_range
+
+            # First, check age with alpha=0 if age estimator is available
+            if age_estimator is not None:
+                img = G.synthesis(w, noise_mode=noise_mode)
+                img = (
+                    (img.permute(0, 2, 3, 1) * 127.5 + 128)
+                    .clamp(0, 255)
+                    .to(torch.uint8)
+                )
+                img_array = img[0].cpu().numpy()
+                pil_img = PIL.Image.fromarray(img_array, "RGB")
+                estimated_age = age_estimator(pil_img)
+
+                if estimated_age is None:
+                    print(f"  ⚠️  Seed {seed}: No face detected, skipping...")
+                    continue
+                elif estimated_age <= 20:
+                    print(f"  ⚠️  Seed {seed}: Age {estimated_age:.1f} <= 20, skipping...")
+                    continue
+                else:
+                    print(f"  ✓ Seed {seed}: Age {estimated_age:.1f} > 20, proceeding...")
+
+            # If age check passed (or not applicable), generate all alphas
+            seed_images = []
             for alpha in alphas:
                 # Clone w to avoid modifying the original
                 w_modified = w.clone()
@@ -231,7 +260,7 @@ def generate_images(
                     start_idx : end_idx + 1, :
                 ].unsqueeze(0)
                 assert w_modified.shape[1:] == (G.num_ws, G.w_dim)
-                img = G.synthesis(w_modified, noise_mode=noise_mode)
+                img = G.synthesis(w_modified, truncation_psi=truncation_psi, noise_mode=noise_mode)
                 img = (
                     (img.permute(0, 2, 3, 1) * 127.5 + 128)
                     .clamp(0, 255)
@@ -251,7 +280,7 @@ def generate_images(
             all_images.append(seed_images)
         else:
             # Generate image without weight modulation
-            img = G.synthesis(w, noise_mode=noise_mode)
+            img = G.synthesis(w, truncation_psi=truncation_psi, noise_mode=noise_mode)
             img = (img.permute(0, 2, 3, 1) * 127.5 + 128).clamp(0, 255).to(torch.uint8)
             PIL.Image.fromarray(img[0].cpu().numpy(), "RGB").save(
                 f"{outdir}/seed{seed:04d}.png"
