@@ -21,7 +21,7 @@ import torch
 import matplotlib.pyplot as plt
 
 import legacy
-from age_estimator import AgeEstimator
+from age_estimator import AgeEstimator, AgePredictor
 
 # Suppress CUDA kernel compilation warnings
 warnings.filterwarnings('ignore', message='Failed to build CUDA kernels for upfirdn2d')
@@ -234,6 +234,7 @@ def generate_images(
     if weight_vector is not None:
         print("Initializing age estimator...")
         age_estimator = AgeEstimator()
+        age_predictor = AgePredictor()
 
     # Generate images.
     all_images = []  # Store images for composite: list of lists (one per seed)
@@ -256,7 +257,7 @@ def generate_images(
                 )
                 img_array = img[0].cpu().numpy()
                 pil_img = PIL.Image.fromarray(img_array, "RGB")
-                estimated_age = age_estimator(pil_img)
+                estimated_age = age_predictor(pil_img)
 
                 if estimated_age is None:
                     print(f"  ⚠️  Seed {seed}: No face detected, skipping...")
