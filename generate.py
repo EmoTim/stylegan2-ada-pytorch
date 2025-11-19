@@ -12,6 +12,7 @@ import os
 import re
 import warnings
 from typing import List, Optional
+import io
 
 import click
 import dnnlib
@@ -19,6 +20,7 @@ import numpy as np
 import PIL.Image
 import torch
 import matplotlib.pyplot as plt
+import boto3
 
 import legacy
 from age_estimator import AgePredictor
@@ -121,6 +123,12 @@ def num_range(s: str) -> List[int]:
     default=False,
     show_default=True,
 )
+@click.option(
+    "--s3-bucket",
+    help="S3 bucket to upload images to (e.g., 's3://bucket-name/path/to/images')",
+    type=str,
+    metavar="S3_URI",
+)
 
 def generate_images(
     ctx: click.Context,
@@ -136,6 +144,7 @@ def generate_images(
     alphas: List[int],
     style_range: tuple,
     create_composite: bool = False,
+    s3_bucket: Optional[str] = None,
 ):
     """Generate images using pretrained network pickle.
 
@@ -189,6 +198,41 @@ def generate_images(
 
     os.makedirs(outdir, exist_ok=True)
 
+    # Initialize S3 client if bucket is specified
+    s3_client = None
+    s3_bucket_name = None
+    s3_prefix = None
+    if s3_bucket:
+        # Parse S3 URI (e.g., s3://bucket-name/path/to/images)
+        if s3_bucket.startswith('s3://'):
+            s3_bucket = s3_bucket[5:]  # Remove 's3://'
+        parts = s3_bucket.split('/', 1)
+        s3_bucket_name = parts[0]
+        s3_prefix = parts[1] if len(parts) > 1 else ''
+        if s3_prefix and not s3_prefix.endswith('/'):
+            s3_prefix += '/'
+
+        s3_client = boto3.client('s3')
+        print(f'S3 upload enabled: s3://{s3_bucket_name}/{s3_prefix}')
+
+    def save_image(pil_img, file_path):
+        """Save image locally and optionally upload to S3."""
+        # Save locally
+        pil_img.save(file_path)
+
+        # Upload to S3 if enabled
+        if s3_client:
+            s3_key = s3_prefix + file_path.replace(outdir + '/', '')
+            try:
+                # Upload directly from memory buffer
+                img_buffer = io.BytesIO()
+                pil_img.save(img_buffer, format='PNG')
+                img_buffer.seek(0)
+                s3_client.upload_fileobj(img_buffer, s3_bucket_name, s3_key)
+                print(f'  ✓ Uploaded to s3://{s3_bucket_name}/{s3_key}')
+            except Exception as e:
+                print(f'  ⚠️ S3 upload failed for {s3_key}: {e}')
+
     # Synthesize the result of a W projection.
     if projected_w is not None:
         if seeds is not None:
@@ -200,9 +244,8 @@ def generate_images(
         for idx, w in enumerate(ws):
             img = G.synthesis(w.unsqueeze(0), noise_mode=noise_mode)
             img = (img.permute(0, 2, 3, 1) * 127.5 + 128).clamp(0, 255).to(torch.uint8)
-            img = PIL.Image.fromarray(img[0].cpu().numpy(), "RGB").save(
-                f"{outdir}/proj{idx:02d}.png"
-            )
+            pil_img = PIL.Image.fromarray(img[0].cpu().numpy(), "RGB")
+            save_image(pil_img, f"{outdir}/proj{idx:02d}.png")
         return
 
     if seeds is None:
@@ -291,18 +334,16 @@ def generate_images(
                 alpha_dir = os.path.join(outdir, f"alpha_{alpha}")
                 os.makedirs(alpha_dir, exist_ok=True)
 
-                pil_img.save(
-                    f"{alpha_dir}/seed{seed:04d}_styles{start_idx}-{end_idx}.png"
-                )
+                file_path = f"{alpha_dir}/seed{seed:04d}_styles{start_idx}-{end_idx}.png"
+                save_image(pil_img, file_path)
                 seed_images.append(img_array)
             all_images.append(seed_images)
         else:
             # Generate image without weight modulation
             img = G.synthesis(w, truncation_psi=truncation_psi, noise_mode=noise_mode)
             img = (img.permute(0, 2, 3, 1) * 127.5 + 128).clamp(0, 255).to(torch.uint8)
-            PIL.Image.fromarray(img[0].cpu().numpy(), "RGB").save(
-                f"{outdir}/seed{seed:04d}.png"
-            )
+            pil_img = PIL.Image.fromarray(img[0].cpu().numpy(), "RGB")
+            save_image(pil_img, f"{outdir}/seed{seed:04d}.png")
 
     # Create composite image if weight modulation was used
     if create_composite and weight_vec is not None and len(all_images) > 0:
@@ -364,6 +405,15 @@ def generate_images(
         plt.savefig(composite_path, dpi=150, bbox_inches="tight")
         plt.close()
         print(f"Composite image saved to {composite_path}")
+
+        # Upload composite to S3 if enabled
+        if s3_client:
+            s3_key = s3_prefix + composite_path.replace(outdir + '/', '')
+            try:
+                s3_client.upload_file(composite_path, s3_bucket_name, s3_key)
+                print(f'  ✓ Composite uploaded to s3://{s3_bucket_name}/{s3_key}')
+            except Exception as e:
+                print(f'  ⚠️ S3 upload failed for composite: {e}')
 
 
 # ----------------------------------------------------------------------------
