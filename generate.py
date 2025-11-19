@@ -250,14 +250,7 @@ def generate_images(
             # First, check age with alpha=0 if age estimator is available
             if age_estimator is not None:
                 img = G.synthesis(w, noise_mode=noise_mode)
-                img = (
-                    (img.permute(0, 2, 3, 1) * 127.5 + 128)
-                    .clamp(0, 255)
-                    .to(torch.uint8)
-                )
-                img_array = img[0].cpu().numpy()
-                pil_img = PIL.Image.fromarray(img_array, "RGB")
-                estimated_age = age_predictor(pil_img)
+                estimated_age = age_predictor(img)
 
                 if estimated_age is None:
                     print(f"  ⚠️  Seed {seed}: No face detected, skipping...")
