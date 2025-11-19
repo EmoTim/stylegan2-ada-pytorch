@@ -57,6 +57,12 @@ def num_range(s: str) -> List[int]:
 @click.command()
 @click.pass_context
 @click.option("--network", "network_pkl", help="Network pickle filename", required=True)
+@click.option(
+    "--vgg-path",
+    help="Path to vgg age predictor",
+    type=str,
+    metavar="FILE",
+)
 @click.option("--seeds", type=num_range, help="List of random seeds")
 @click.option(
     "--trunc",
@@ -93,6 +99,7 @@ def num_range(s: str) -> List[int]:
     type=str,
     metavar="FILE",
 )
+
 @click.option(
     "--alphas",
     type=float_range,
@@ -118,6 +125,7 @@ def num_range(s: str) -> List[int]:
 def generate_images(
     ctx: click.Context,
     network_pkl: str,
+    vgg_path: str,
     seeds: Optional[List[int]],
     truncation_psi: float,
     noise_mode: str,
@@ -127,7 +135,7 @@ def generate_images(
     weight_vector: Optional[str],
     alphas: List[int],
     style_range: tuple,
-    create_composite: bool = False
+    create_composite: bool = False,
 ):
     """Generate images using pretrained network pickle.
 
@@ -233,7 +241,7 @@ def generate_images(
     age_predictor = None
     if weight_vector is not None:
         print("Initializing age predictor...")
-        age_predictor = AgePredictor()
+        age_predictor = AgePredictor(vgg_path=vgg_path)
 
     # Generate images.
     all_images = []  # Store images for composite: list of lists (one per seed)
@@ -375,6 +383,7 @@ if __name__ == "__main__":
             "--alphas=0:0:1",
             "--weight-vector=weight.npy",
             "--network=https://nvlabs-fi-cdn.nvidia.com/stylegan2-ada-pytorch/pretrained/ffhq.pkl",
+            "--vgg-path="
         ]
 
     generate_images()  # pylint: disable=no-value-for-parameter
