@@ -6,10 +6,10 @@ from PIL import Image
 
 class AgeEstimator:
     def __init__(
-        self, ctx_id: int = 0, det_size: tuple[int, int] = (1024, 1024)
+        self, ctx_id: int = -1, det_size: tuple[int, int] = (640, 640)
     ) -> None:
         self.app = FaceAnalysis(name="buffalo_l")  # SOTA Model including age
-        self.app.prepare(ctx_id=ctx_id, det_size=det_size)  # 0 = gpu
+        self.app.prepare(ctx_id=ctx_id, det_size=det_size)  # -1 = CPU, 0+ = GPU
 
     def estimate_age(self, pil_img: Image.Image) -> float | None:
         """

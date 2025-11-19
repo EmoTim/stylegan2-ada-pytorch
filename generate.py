@@ -229,7 +229,7 @@ def generate_images(
     age_estimator = None
     if weight_vector is not None:
         print("Initializing age estimator...")
-        age_estimator = AgeEstimator(ctx_id=0, det_size=(1024, 1024))
+        age_estimator = AgeEstimator(ctx_id=-1, det_size=(640, 640))
 
     # Generate images.
     all_images = []  # Store images for composite: list of lists (one per seed)
