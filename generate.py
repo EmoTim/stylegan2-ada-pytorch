@@ -21,7 +21,7 @@ import torch
 import matplotlib.pyplot as plt
 
 import legacy
-from age_estimator import AgeEstimator, AgePredictor
+from age_estimator import AgePredictor
 
 # Suppress CUDA kernel compilation warnings
 warnings.filterwarnings('ignore', message='Failed to build CUDA kernels for upfirdn2d')
@@ -229,11 +229,10 @@ def generate_images(
             f"Applying weight vector to style blocks {start_idx} to {end_idx} (inclusive)"
         )
 
-    # Initialize age estimator if using weight vector
-    age_estimator = None
+    # Initialize age predictor if using weight vector
+    age_predictor = None
     if weight_vector is not None:
-        print("Initializing age estimator...")
-        age_estimator = AgeEstimator()
+        print("Initializing age predictor...")
         age_predictor = AgePredictor()
 
     # Generate images.
@@ -248,7 +247,7 @@ def generate_images(
             start_idx, end_idx = style_range
 
             # First, check age with alpha=0 if age estimator is available
-            if age_estimator is not None:
+            if age_predictor is not None:
                 img = G.synthesis(w, noise_mode=noise_mode)
                 estimated_age = age_predictor(img)
 
