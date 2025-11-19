@@ -57,12 +57,16 @@ class AgePredictor:
 
     def extract_ages(self, x):
         x = torch.from_numpy(np.array(x))
+        # Convert from uint8 to float and normalize to [0, 1]
+        x = x.float() / 255.0
         # permute to (C, H, W)
         x = x.permute(2, 0, 1)  # shape: [3, 1024, 1024]
         # add batch dimension
         x = x.unsqueeze(0)  # shape: [1, 3, 1024, 1024]
+        # Move to GPU
+        x = x.cuda()
         # interpolate
-        x = F.interpolate(x, size=(224, 224), mode='bilinear', align_corners=False)  # shape: [1, 3, 224, 224]  
+        x = F.interpolate(x, size=(224, 224), mode='bilinear', align_corners=False)  # shape: [1, 3, 224, 224]
         predict_age_pb = self.age_net(x)['fc8']
         predicted_age = self.__get_predicted_age(predict_age_pb)
         return predicted_age
