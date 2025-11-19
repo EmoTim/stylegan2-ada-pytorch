@@ -237,7 +237,7 @@ def generate_images(
     for seed_idx, seed in enumerate(seeds):
         print("Generating image for seed %d (%d/%d) ..." % (seed, seed_idx, len(seeds)))
         z = torch.from_numpy(np.random.RandomState(seed).randn(1, G.z_dim)).to(device)
-        w = G.mapping(z, label)
+        w = G.mapping(z, label, truncation_psi=truncation_psi)
 
         if weight_vec is not None:
             start_idx, end_idx = style_range
@@ -273,7 +273,7 @@ def generate_images(
                     start_idx : end_idx + 1, :
                 ].unsqueeze(0)
                 assert w_modified.shape[1:] == (G.num_ws, G.w_dim)
-                img = G.synthesis(w_modified, truncation_psi=truncation_psi, noise_mode=noise_mode)
+                img = G.synthesis(w_modified, noise_mode=noise_mode)
                 img = (
                     (img.permute(0, 2, 3, 1) * 127.5 + 128)
                     .clamp(0, 255)
