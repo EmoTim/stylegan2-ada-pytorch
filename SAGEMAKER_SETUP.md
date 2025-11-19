@@ -29,11 +29,13 @@ uv pip install sagemaker boto3
 If you have a custom trained model (not using NVIDIA's pretrained):
 
 ```bash
-# Upload model pickle to S3
-aws s3 cp /path/to/your/model.pkl s3://stylegan2-generated-images_v2/models/model.pkl --profile Timothe
+# Upload pre-trained VGG checkpoint to S3
+aws s3 cp /home/sagemaker-user/stylegan2-ada-pytorch/dex_age_classifier.pth \
+s3://emobot-prod-workspace-bucket/usecases/emobot-research/datasets/stylegan2-generated-images_v2/models/vgg.pth
 
-# If you have a weight vector
-aws s3 cp /path/to/weight.npy s3://stylegan2-generated-images_v2/models/weight.npy --profile Timothe
+# Upload weight vector
+aws s3 cp /home/sagemaker-user/stylegan2-ada-pytorch/weight.npy \
+s3://emobot-prod-workspace-bucket/usecases/emobot-research/datasets/stylegan2-generated-images_v2/models/weight.npy
 ```
 
 ### Step 3: Run a Test Job (RECOMMENDED)
