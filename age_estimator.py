@@ -37,9 +37,9 @@ class AgeEstimator:
 
 
 class AgePredictor:
-    def __init__(self):
+    def __init__(self, vgg_path: str):
         self.age_net = VGG()
-        ckpt = torch.load("dex_age_classifier.pth", map_location="cpu")['state_dict']
+        ckpt = torch.load(vgg_path, map_location="cpu")['state_dict']
         ckpt = {k.replace('-', '_'): v for k, v in ckpt.items()}
         self.age_net.load_state_dict(ckpt)
         self.age_net.cuda()
