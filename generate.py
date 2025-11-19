@@ -10,6 +10,7 @@
 
 import os
 import re
+import warnings
 from typing import List, Optional
 
 import click
@@ -21,6 +22,9 @@ import matplotlib.pyplot as plt
 
 import legacy
 from age_estimator import AgeEstimator
+
+# Suppress CUDA kernel compilation warnings
+warnings.filterwarnings('ignore', message='Failed to build CUDA kernels for upfirdn2d')
 
 # ----------------------------------------------------------------------------
 
