@@ -383,7 +383,7 @@ if __name__ == "__main__":
             "--alphas=0:0:1",
             "--weight-vector=weight.npy",
             "--network=https://nvlabs-fi-cdn.nvidia.com/stylegan2-ada-pytorch/pretrained/ffhq.pkl",
-            "--vgg-path="
+            "--vgg-path=/home/sagemaker-user/stylegan2-ada-pytorch/dex_age_classifier.pth"
         ]
 
     generate_images()  # pylint: disable=no-value-for-parameter
