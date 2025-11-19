@@ -229,7 +229,7 @@ def generate_images(
     age_estimator = None
     if weight_vector is not None:
         print("Initializing age estimator...")
-        age_estimator = AgeEstimator(ctx_id=-1, det_size=(640, 640))
+        age_estimator = AgeEstimator()
 
     # Generate images.
     all_images = []  # Store images for composite: list of lists (one per seed)
@@ -365,15 +365,18 @@ def generate_images(
 
 if __name__ == "__main__":
     import sys
+    os.chdir("/home/sagemaker-user/stylegan2-ada-pytorch")
 
     # Default arguments for debugging/development
     if len(sys.argv) == 1:
         sys.argv = [
             "generate.py",
-            "--outdir=stylegan2-ada-pytorch/out",
+            "--outdir=out",
             "--trunc=0.7",
             "--seeds=600-605",
-            "--weight-vector=stylegan2-ada-pytorch/weight.npy",
+            "--style-range", "0", "4",
+            "--alphas=0:0:1",
+            "--weight-vector=weight.npy",
             "--network=https://nvlabs-fi-cdn.nvidia.com/stylegan2-ada-pytorch/pretrained/ffhq.pkl",
         ]
 
