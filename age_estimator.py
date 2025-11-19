@@ -22,6 +22,7 @@ class AgeEstimator:
             Estimated age as float, or None if no face detected
         """
         img = np.array(pil_img)
+        img = img[:, :, ::-1]  # Convert RGB to BGR for InsightFace
         faces = self.app.get(img)
         if len(faces) == 0:
             return None
