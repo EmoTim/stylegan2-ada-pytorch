@@ -9,17 +9,17 @@ class GPUJPEGEncoder:
 
     def encode_batch(self, batch_tensor):
         """
-        batch_tensor: torch.Tensor [B, 3, H, W], uint8, CUDA
-        
+        batch_tensor: torch.Tensor [B, H, W, 3], uint8, CUDA (channel-last)
+
         Returns: list of JPEG bytes for each image
         """
         assert batch_tensor.is_cuda
         assert batch_tensor.dtype == torch.uint8
-        B, C, H, W = batch_tensor.shape
+        B, H, W, C = batch_tensor.shape
         assert C == 3, "Expecting RGB images"
 
-        # Convert to (B, H, W, 3) channel-last format for nvimgcodec
-        batch_chlast = batch_tensor.permute(0, 2, 3, 1).contiguous()
+        # Ensure contiguous memory layout
+        batch_chlast = batch_tensor.contiguous()
 
         # Wrap into nvimgcodec Images (GPU tensor is passed directly)
         imgs = nvimgcodec.as_images(batch_chlast)

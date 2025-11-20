@@ -26,6 +26,7 @@ import boto3
 
 import legacy
 from age_estimator import AgePredictor
+from gpu_jpeg_encoder import GPUJPEGEncoder
 
 # Suppress CUDA kernel compilation warnings
 warnings.filterwarnings('ignore', message='Failed to build CUDA kernels for upfirdn2d')
@@ -208,6 +209,10 @@ def generate_images(
 
     os.makedirs(outdir, exist_ok=True)
 
+    # Initialize GPU JPEG encoder
+    gpu_jpeg_encoder = GPUJPEGEncoder(quality=95)
+    print("✓ GPU JPEG encoder initialized (quality=95)")
+
     # Initialize S3 client if bucket is specified
     s3_client = None
     s3_bucket_name = None
@@ -226,16 +231,12 @@ def generate_images(
 
         s3_client = boto3.client('s3')
         upload_executor = ThreadPoolExecutor(max_workers=32)
-        print(f'S3 upload enabled: s3://{s3_bucket_name}/{s3_prefix} (16 parallel workers)')
+        print(f'S3 upload enabled: s3://{s3_bucket_name}/{s3_prefix} (32 parallel workers)')
 
-    def upload_to_s3_async(img_array, s3_key):
-        """Upload image to S3 asynchronously using JPEG format."""
+    def upload_to_s3_async(jpeg_bytes, s3_key):
+        """Upload JPEG bytes to S3 asynchronously."""
         try:
-            img = PIL.Image.fromarray(img_array, 'RGB')
-            buf = io.BytesIO()
-            # Use JPEG with high quality for faster encoding and smaller files
-            img.save(buf, format='JPEG', quality=95, optimize=True)
-            buf.seek(0)
+            buf = io.BytesIO(jpeg_bytes)
             s3_client.upload_fileobj(buf, s3_bucket_name, s3_key)
             return True, s3_key
         except Exception as e:
@@ -386,30 +387,37 @@ def generate_images(
                     )
                     alpha_synthesis_time = time.time() - alpha_synthesis_start
 
-                    # Save each image
+                    # GPU-batch encode to JPEG and upload
                     save_start = time.time()
-                    for i, seed in enumerate(valid_seeds):
-                        img_array = imgs[i].cpu().numpy()
-                        # pil_img = PIL.Image.fromarray(img_array, "RGB")
 
+                    # GPU-side JPEG encoding (batch) - imgs is already [B, H, W, 3]
+                    encode_start = time.time()
+                    jpeg_list = gpu_jpeg_encoder.encode_batch(imgs)
+                    encode_time = time.time() - encode_start
+
+                    # Submit uploads and save to composite
+                    upload_submit_start = time.time()
+                    for i, seed in enumerate(valid_seeds):
                         # Create subdirectory for this alpha value
                         alpha_dir = os.path.join(outdir, f"alpha_{alpha}")
                         os.makedirs(alpha_dir, exist_ok=True)
 
-                        file_path = f"{alpha_dir}/seed{seed:04d}_styles{start_idx}-{end_idx}.png"
-                        # save_image(pil_img, file_path)
+                        file_path = f"{alpha_dir}/seed{seed:04d}_styles{start_idx}-{end_idx}.jpg"
 
                         # Submit S3 upload asynchronously if enabled
                         if upload_executor:
-                            s3_key = s3_prefix + file_path.replace(outdir + '/', '').replace('.png', '.jpg')
-                            future = upload_executor.submit(upload_to_s3_async, img_array, s3_key)
+                            s3_key = s3_prefix + file_path.replace(outdir + '/', '')
+                            future = upload_executor.submit(upload_to_s3_async, jpeg_list[i], s3_key)
                             upload_futures.append(future)
 
-                        # Store for composite
+                        # Store for composite (convert to numpy for matplotlib)
+                        img_array = imgs[i].cpu().numpy()
                         seed_images_dict[seed].append(img_array)
                         total_images_generated += 1
+
+                    upload_submit_time = time.time() - upload_submit_start
                     save_time = time.time() - save_start
-                    print(f"  ⏱️  Alpha {alpha:+.1f}: synthesis={alpha_synthesis_time:.2f}s, save={save_time:.2f}s ({len(valid_seeds)} images)")
+                    print(f"  ⏱️  Alpha {alpha:+.1f}: synthesis={alpha_synthesis_time:.2f}s, encode={encode_time:.3f}s, submit={upload_submit_time:.3f}s ({len(valid_seeds)} images)")
 
                 alpha_generation_time = time.time() - alpha_generation_start
                 print(f"  ⏱️  Total alpha generation: {alpha_generation_time:.2f}s for {len(alphas)} alphas × {len(valid_seeds)} seeds = {len(alphas) * len(valid_seeds)} images")
@@ -425,22 +433,24 @@ def generate_images(
             imgs = (imgs.permute(0, 2, 3, 1) * 127.5 + 128).clamp(0, 255).to(torch.uint8)
             synthesis_time = time.time() - synthesis_start
 
+            # GPU-batch encode to JPEG
             save_start = time.time()
-            for i, seed in enumerate(batch_seeds):
-                img_array = imgs[i].cpu().numpy()
-                # pil_img = PIL.Image.fromarray(img_array, "RGB")
-                file_path = f"{outdir}/seed{seed:04d}.png"
-                # save_image(pil_img, file_path)uv
+            encode_start = time.time()
+            jpeg_list = gpu_jpeg_encoder.encode_batch(imgs)
+            encode_time = time.time() - encode_start
 
+            upload_submit_start = time.time()
+            for i, seed in enumerate(batch_seeds):
                 # Submit S3 upload asynchronously if enabled
                 if upload_executor:
                     s3_key = s3_prefix + f"seed{seed:04d}.jpg"
-                    future = upload_executor.submit(upload_to_s3_async, img_array, s3_key)
+                    future = upload_executor.submit(upload_to_s3_async, jpeg_list[i], s3_key)
                     upload_futures.append(future)
 
                 total_images_generated += 1
+            upload_submit_time = time.time() - upload_submit_start
             save_time = time.time() - save_start
-            print(f"  ⏱️  Synthesis: {synthesis_time:.2f}s, Save: {save_time:.2f}s ({current_batch_size} images)")
+            print(f"  ⏱️  Synthesis: {synthesis_time:.2f}s, Encode: {encode_time:.3f}s, Submit: {upload_submit_time:.3f}s ({current_batch_size} images)")
 
         batch_time = time.time() - batch_start_time
         print(f"  ⏱️  Batch {batch_num} completed in {batch_time:.2f}s\n")
