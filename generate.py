@@ -14,6 +14,7 @@ import warnings
 from typing import List, Optional
 import io
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import click
 import dnnlib
@@ -211,6 +212,8 @@ def generate_images(
     s3_client = None
     s3_bucket_name = None
     s3_prefix = None
+    upload_executor = None
+
     if s3_bucket:
         # Parse S3 URI (e.g., s3://bucket-name/path/to/images)
         if s3_bucket.startswith('s3://'):
@@ -222,25 +225,26 @@ def generate_images(
             s3_prefix += '/'
 
         s3_client = boto3.client('s3')
-        print(f'S3 upload enabled: s3://{s3_bucket_name}/{s3_prefix}')
+        upload_executor = ThreadPoolExecutor(max_workers=16)
+        print(f'S3 upload enabled: s3://{s3_bucket_name}/{s3_prefix} (16 parallel workers)')
+
+    def upload_to_s3_async(img_array, s3_key):
+        """Upload image to S3 asynchronously using JPEG format."""
+        try:
+            img = PIL.Image.fromarray(img_array, 'RGB')
+            buf = io.BytesIO()
+            # Use JPEG with high quality for faster encoding and smaller files
+            img.save(buf, format='JPEG', quality=95, optimize=True)
+            buf.seek(0)
+            s3_client.upload_fileobj(buf, s3_bucket_name, s3_key)
+            return True, s3_key
+        except Exception as e:
+            return False, f'{s3_key}: {e}'
 
     def save_image(pil_img, file_path):
-        """Save image locally and optionally upload to S3."""
-        # Save locally
+        """Save image locally as PNG."""
+        # Save locally as PNG
         pil_img.save(file_path)
-
-        # Upload to S3 if enabled
-        if s3_client:
-            s3_key = s3_prefix + file_path.replace(outdir + '/', '')
-            try:
-                # Upload directly from memory buffer
-                img_buffer = io.BytesIO()
-                pil_img.save(img_buffer, format='PNG')
-                img_buffer.seek(0)
-                s3_client.upload_fileobj(img_buffer, s3_bucket_name, s3_key)
-                print(f'  ✓ Uploaded to s3://{s3_bucket_name}/{s3_key}')
-            except Exception as e:
-                print(f'  ⚠️ S3 upload failed for {s3_key}: {e}')
 
     # Synthesize the result of a W projection.
     if projected_w is not None:
@@ -302,6 +306,7 @@ def generate_images(
 
     total_start_time = time.time()
     total_images_generated = 0
+    upload_futures = []  # Track async S3 uploads
 
     # Process seeds in batches
     for batch_start in range(0, len(seeds), batch_size):
@@ -394,6 +399,12 @@ def generate_images(
                         file_path = f"{alpha_dir}/seed{seed:04d}_styles{start_idx}-{end_idx}.png"
                         save_image(pil_img, file_path)
 
+                        # Submit S3 upload asynchronously if enabled
+                        if upload_executor:
+                            s3_key = s3_prefix + file_path.replace(outdir + '/', '').replace('.png', '.jpg')
+                            future = upload_executor.submit(upload_to_s3_async, img_array, s3_key)
+                            upload_futures.append(future)
+
                         # Store for composite
                         seed_images_dict[seed].append(img_array)
                         total_images_generated += 1
@@ -416,14 +427,51 @@ def generate_images(
 
             save_start = time.time()
             for i, seed in enumerate(batch_seeds):
-                pil_img = PIL.Image.fromarray(imgs[i].cpu().numpy(), "RGB")
-                save_image(pil_img, f"{outdir}/seed{seed:04d}.png")
+                img_array = imgs[i].cpu().numpy()
+                pil_img = PIL.Image.fromarray(img_array, "RGB")
+                file_path = f"{outdir}/seed{seed:04d}.png"
+                save_image(pil_img, file_path)
+
+                # Submit S3 upload asynchronously if enabled
+                if upload_executor:
+                    s3_key = s3_prefix + f"seed{seed:04d}.jpg"
+                    future = upload_executor.submit(upload_to_s3_async, img_array, s3_key)
+                    upload_futures.append(future)
+
                 total_images_generated += 1
             save_time = time.time() - save_start
             print(f"  ⏱️  Synthesis: {synthesis_time:.2f}s, Save: {save_time:.2f}s ({current_batch_size} images)")
 
         batch_time = time.time() - batch_start_time
         print(f"  ⏱️  Batch {batch_num} completed in {batch_time:.2f}s\n")
+
+    # Wait for all S3 uploads to complete
+    if upload_executor and upload_futures:
+        print(f"\n⏳ Waiting for {len(upload_futures)} S3 uploads to complete...")
+        upload_start = time.time()
+
+        success_count = 0
+        failed_uploads = []
+
+        for future in as_completed(upload_futures):
+            success, result = future.result()
+            if success:
+                success_count += 1
+            else:
+                failed_uploads.append(result)
+
+        upload_time = time.time() - upload_start
+        print(f"✅ S3 uploads completed: {success_count}/{len(upload_futures)} successful in {upload_time:.2f}s")
+        print(f"   Upload throughput: {success_count/upload_time:.2f} images/second")
+
+        if failed_uploads:
+            print(f"⚠️  Failed uploads ({len(failed_uploads)}):")
+            for error in failed_uploads[:5]:  # Show first 5 errors
+                print(f"   - {error}")
+            if len(failed_uploads) > 5:
+                print(f"   ... and {len(failed_uploads) - 5} more")
+
+        upload_executor.shutdown(wait=False)
 
     # Print final statistics
     total_time = time.time() - total_start_time
