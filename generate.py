@@ -376,7 +376,7 @@ def generate_images(
                         save_image(pil_img, file_path)
 
                         # Store for composite (initialize list if this is the first alpha)
-                        if alpha_idx == 0:
+                        if create_composite and alpha_idx == 0:
                             all_images.append([])
                         all_images[len(all_images) - num_valid + i].append(img_array)
         else:
