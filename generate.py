@@ -15,7 +15,7 @@ from typing import List, Optional
 import io
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
-
+from nvidia import nvimgcodec
 import click
 import dnnlib
 import numpy as np
@@ -230,7 +230,7 @@ def generate_images(
             s3_prefix += '/'
 
         s3_client = boto3.client('s3')
-        upload_executor = ThreadPoolExecutor(max_workers=32)
+        upload_executor = ThreadPoolExecutor(max_workers=8)
         print(f'S3 upload enabled: s3://{s3_bucket_name}/{s3_prefix} (32 parallel workers)')
 
     def upload_to_s3_async(jpeg_bytes, s3_key):
@@ -392,6 +392,8 @@ def generate_images(
 
                     # GPU-side JPEG encoding (batch) - imgs is already [B, H, W, 3]
                     encode_start = time.time()
+                    # enc = nvimgcodec.Encoder()
+                    # jpeg_list = enc.encode([img for img in imgs], ".jpg")
                     jpeg_list = gpu_jpeg_encoder.encode_batch(imgs)
                     encode_time = time.time() - encode_start
 

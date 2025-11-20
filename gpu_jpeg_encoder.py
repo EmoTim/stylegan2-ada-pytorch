@@ -5,7 +5,10 @@ import numpy as np
 class GPUJPEGEncoder:
     def __init__(self, quality=95):
         self.encoder = nvimgcodec.Encoder()
-        self.params = nvimgcodec.EncodeParams(quality=quality)
+        self.params = nvimgcodec.EncodeParams(
+            quality_type=nvimgcodec.QualityType.DEFAULT,
+            quality_value=float(quality)
+        )
 
     def encode_batch(self, batch_tensor):
         """
@@ -18,15 +21,11 @@ class GPUJPEGEncoder:
         B, H, W, C = batch_tensor.shape
         assert C == 3, "Expecting RGB images"
 
-        # Ensure contiguous memory layout
-        batch_chlast = batch_tensor.contiguous()
 
-        # Wrap into nvimgcodec Images (GPU tensor is passed directly)
-        imgs = nvimgcodec.as_images(batch_chlast)
-
-        # GPU-side JPEG encoding (batched)
-        encoded = self.encoder.encode(imgs, self.params)
-
-        # Convert each encoded image to raw bytes
-        jpeg_list = [enc.cpu().numpy().tobytes() for enc in encoded]
+        jpeg_list = []
+        for img in batch_tensor:
+            img_chlast = img.contiguous()  # [H,W,3]
+            nv_img = nvimgcodec.as_images([img_chlast])[0]   # single image
+            encoded = self.encoder.encode(nv_img, codec="jpeg", params=self.params)
+            jpeg_list.append(encoded)
         return jpeg_list
