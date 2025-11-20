@@ -42,7 +42,7 @@ def test_s3_upload():
         print(f"✓ Upload verified! Size: {size_kb:.2f} KB")
 
         # Clean up test file
-        # s3_client.delete_object(Bucket=bucket, Key=test_key)
+        s3_client.delete_object(Bucket=bucket, Key=test_key)
         # print("✓ Test file cleaned up")
         print("✓ Test file kept for verification")
 
