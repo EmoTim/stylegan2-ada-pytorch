@@ -291,6 +291,8 @@ def generate_images(
     # Initialize age predictor if using weight vector
     age_predictor = None
     if weight_vector is not None:
+        if vgg_path is None:
+            ctx.fail("--vgg-path is required when using --weight-vector for age filtering")
         print("Initializing age predictor...")
         age_predictor = AgePredictor(vgg_path=vgg_path)
 
