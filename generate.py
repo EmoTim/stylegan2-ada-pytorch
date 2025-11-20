@@ -129,6 +129,13 @@ def num_range(s: str) -> List[int]:
     type=str,
     metavar="S3_URI",
 )
+@click.option(
+    "--batch-size",
+    help="Number of seeds to process in parallel (default: 1)",
+    type=int,
+    default=1,
+    show_default=True,
+)
 
 def generate_images(
     ctx: click.Context,
@@ -145,6 +152,7 @@ def generate_images(
     style_range: tuple,
     create_composite: bool = False,
     s3_bucket: Optional[str] = None,
+    batch_size: int = 1,
 ):
     """Generate images using pretrained network pickle.
 
@@ -289,61 +297,87 @@ def generate_images(
     # Generate images.
     all_images = []  # Store images for composite: list of lists (one per seed)
 
-    for seed_idx, seed in enumerate(seeds):
-        print("Generating image for seed %d (%d/%d) ..." % (seed, seed_idx, len(seeds)))
-        z = torch.from_numpy(np.random.RandomState(seed).randn(1, G.z_dim)).to(device)
-        w = G.mapping(z, label, truncation_psi=truncation_psi)
+    # Process seeds in batches
+    for batch_start in range(0, len(seeds), batch_size):
+        batch_end = min(batch_start + batch_size, len(seeds))
+        batch_seeds = seeds[batch_start:batch_end]
+        current_batch_size = len(batch_seeds)
+
+        print(f"Processing batch {batch_start//batch_size + 1}/{(len(seeds) + batch_size - 1)//batch_size} (seeds {batch_start}-{batch_end-1})...")
+
+        # Generate latent codes for all seeds in batch
+        z_batch = torch.stack([
+            torch.from_numpy(np.random.RandomState(seed).randn(G.z_dim))
+            for seed in batch_seeds
+        ]).to(device)
+
+        # Expand label to match batch size
+        label_batch = label.repeat(current_batch_size, 1)
+
+        # Generate w latent codes for batch
+        w_batch = G.mapping(z_batch, label_batch, truncation_psi=truncation_psi)
 
         if weight_vec is not None:
             start_idx, end_idx = style_range
 
-            # First, check age with alpha=0 if age estimator is available
+            # First, check ages with alpha=0 if age estimator is available
+            valid_indices = []
             if age_predictor is not None:
-                img = G.synthesis(w, noise_mode=noise_mode)
-                estimated_age = age_predictor(img)
+                imgs = G.synthesis(w_batch, noise_mode=noise_mode)
+                for i, seed in enumerate(batch_seeds):
+                    estimated_age = age_predictor(imgs[i:i+1])
 
-                if estimated_age is None:
-                    print(f"  ⚠️  Seed {seed}: No face detected, skipping...")
-                    continue
-                elif estimated_age <= 20:
-                    print(f"  ⚠️  Seed {seed}: Age {estimated_age:.1f} <= 20, skipping...")
-                    continue
-                else:
-                    print(f"  ✓ Seed {seed}: Age {estimated_age:.1f} > 20, proceeding...")
+                    if estimated_age is None:
+                        print(f"  ⚠️  Seed {seed}: No face detected, skipping...")
+                    elif estimated_age <= 20:
+                        print(f"  ⚠️  Seed {seed}: Age {estimated_age:.1f} <= 20, skipping...")
+                    else:
+                        print(f"  ✓ Seed {seed}: Age {estimated_age:.1f} > 20, proceeding...")
+                        valid_indices.append(i)
+            else:
+                # No age predictor, all seeds are valid
+                valid_indices = list(range(current_batch_size))
 
-            # If age check passed (or not applicable), generate all alphas
-            seed_images = []
-            for alpha in alphas:
-                # Clone w to avoid modifying the original
-                w_modified = w.clone()
-                # Apply weight vector only to the specified range of style blocks
-                w_modified[:, start_idx : end_idx + 1, :] += alpha * weight_vec[
-                    start_idx : end_idx + 1, :
-                ].unsqueeze(0)
-                assert w_modified.shape[1:] == (G.num_ws, G.w_dim)
-                img = G.synthesis(w_modified, noise_mode=noise_mode)
-                img = (
-                    (img.permute(0, 2, 3, 1) * 127.5 + 128)
-                    .clamp(0, 255)
-                    .to(torch.uint8)
-                )
-                img_array = img[0].cpu().numpy()
-                pil_img = PIL.Image.fromarray(img_array, "RGB")
+            # Process only valid seeds
+            for i in valid_indices:
+                seed = batch_seeds[i]
+                w = w_batch[i:i+1]
 
-                # Create subdirectory for this alpha value
-                alpha_dir = os.path.join(outdir, f"alpha_{alpha}")
-                os.makedirs(alpha_dir, exist_ok=True)
+                # Generate all alphas for this seed
+                seed_images = []
+                for alpha in alphas:
+                    # Clone w to avoid modifying the original
+                    w_modified = w.clone()
+                    # Apply weight vector only to the specified range of style blocks
+                    w_modified[:, start_idx : end_idx + 1, :] += alpha * weight_vec[
+                        start_idx : end_idx + 1, :
+                    ].unsqueeze(0)
+                    assert w_modified.shape[1:] == (G.num_ws, G.w_dim)
+                    img = G.synthesis(w_modified, noise_mode=noise_mode)
+                    img = (
+                        (img.permute(0, 2, 3, 1) * 127.5 + 128)
+                        .clamp(0, 255)
+                        .to(torch.uint8)
+                    )
+                    img_array = img[0].cpu().numpy()
+                    pil_img = PIL.Image.fromarray(img_array, "RGB")
 
-                file_path = f"{alpha_dir}/seed{seed:04d}_styles{start_idx}-{end_idx}.png"
-                save_image(pil_img, file_path)
-                seed_images.append(img_array)
-            all_images.append(seed_images)
+                    # Create subdirectory for this alpha value
+                    alpha_dir = os.path.join(outdir, f"alpha_{alpha}")
+                    os.makedirs(alpha_dir, exist_ok=True)
+
+                    file_path = f"{alpha_dir}/seed{seed:04d}_styles{start_idx}-{end_idx}.png"
+                    save_image(pil_img, file_path)
+                    seed_images.append(img_array)
+                all_images.append(seed_images)
         else:
-            # Generate image without weight modulation
-            img = G.synthesis(w, truncation_psi=truncation_psi, noise_mode=noise_mode)
-            img = (img.permute(0, 2, 3, 1) * 127.5 + 128).clamp(0, 255).to(torch.uint8)
-            pil_img = PIL.Image.fromarray(img[0].cpu().numpy(), "RGB")
-            save_image(pil_img, f"{outdir}/seed{seed:04d}.png")
+            # Generate images without weight modulation (batch mode)
+            imgs = G.synthesis(w_batch, truncation_psi=truncation_psi, noise_mode=noise_mode)
+            imgs = (imgs.permute(0, 2, 3, 1) * 127.5 + 128).clamp(0, 255).to(torch.uint8)
+
+            for i, seed in enumerate(batch_seeds):
+                pil_img = PIL.Image.fromarray(imgs[i].cpu().numpy(), "RGB")
+                save_image(pil_img, f"{outdir}/seed{seed:04d}.png")
 
     # Create composite image if weight modulation was used
     if create_composite and weight_vec is not None and len(all_images) > 0:
