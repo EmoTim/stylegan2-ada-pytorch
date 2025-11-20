@@ -225,7 +225,7 @@ def generate_images(
             s3_prefix += '/'
 
         s3_client = boto3.client('s3')
-        upload_executor = ThreadPoolExecutor(max_workers=16)
+        upload_executor = ThreadPoolExecutor(max_workers=32)
         print(f'S3 upload enabled: s3://{s3_bucket_name}/{s3_prefix} (16 parallel workers)')
 
     def upload_to_s3_async(img_array, s3_key):
@@ -390,14 +390,14 @@ def generate_images(
                     save_start = time.time()
                     for i, seed in enumerate(valid_seeds):
                         img_array = imgs[i].cpu().numpy()
-                        pil_img = PIL.Image.fromarray(img_array, "RGB")
+                        # pil_img = PIL.Image.fromarray(img_array, "RGB")
 
                         # Create subdirectory for this alpha value
                         alpha_dir = os.path.join(outdir, f"alpha_{alpha}")
                         os.makedirs(alpha_dir, exist_ok=True)
 
                         file_path = f"{alpha_dir}/seed{seed:04d}_styles{start_idx}-{end_idx}.png"
-                        save_image(pil_img, file_path)
+                        # save_image(pil_img, file_path)
 
                         # Submit S3 upload asynchronously if enabled
                         if upload_executor:
@@ -428,9 +428,9 @@ def generate_images(
             save_start = time.time()
             for i, seed in enumerate(batch_seeds):
                 img_array = imgs[i].cpu().numpy()
-                pil_img = PIL.Image.fromarray(img_array, "RGB")
+                # pil_img = PIL.Image.fromarray(img_array, "RGB")
                 file_path = f"{outdir}/seed{seed:04d}.png"
-                save_image(pil_img, file_path)
+                # save_image(pil_img, file_path)uv
 
                 # Submit S3 upload asynchronously if enabled
                 if upload_executor:
