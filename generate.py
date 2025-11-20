@@ -351,9 +351,7 @@ def generate_images(
                     # Clone w to avoid modifying the original
                     w_modified = w.clone()
                     # Apply weight vector only to the specified range of style blocks
-                    w_modified[:, start_idx : end_idx + 1, :] += alpha * weight_vec[
-                        start_idx : end_idx + 1, :
-                    ].unsqueeze(0)
+                    w_modified[:, start_idx:end_idx + 1, :] += alpha * weight_vec[start_idx:end_idx + 1, :].unsqueeze(0)
                     assert w_modified.shape[1:] == (G.num_ws, G.w_dim)
                     img = G.synthesis(w_modified, noise_mode=noise_mode)
                     img = (
