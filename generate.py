@@ -13,6 +13,7 @@ import re
 import warnings
 from typing import List, Optional
 import io
+import time
 
 import click
 import dnnlib
@@ -299,13 +300,19 @@ def generate_images(
     # Generate images.
     all_images = []  # Store images for composite: list of lists (one per seed)
 
+    total_start_time = time.time()
+    total_images_generated = 0
+
     # Process seeds in batches
     for batch_start in range(0, len(seeds), batch_size):
         batch_end = min(batch_start + batch_size, len(seeds))
         batch_seeds = seeds[batch_start:batch_end]
         current_batch_size = len(batch_seeds)
 
-        print(f"Processing batch {batch_start//batch_size + 1}/{(len(seeds) + batch_size - 1)//batch_size} (seeds {batch_start}-{batch_end-1})...")
+        batch_num = batch_start//batch_size + 1
+        total_batches = (len(seeds) + batch_size - 1)//batch_size
+        print(f"Processing batch {batch_num}/{total_batches} (seeds {batch_start}-{batch_end-1})...")
+        batch_start_time = time.time()
 
         # Generate latent codes for all seeds in batch
         z_batch = torch.stack([
@@ -325,7 +332,10 @@ def generate_images(
             # First, check ages with alpha=0 if age estimator is available
             valid_indices = []
             if age_predictor is not None:
+                age_check_start = time.time()
                 imgs = G.synthesis(w_batch, noise_mode=noise_mode)
+                age_check_synthesis_time = time.time() - age_check_start
+
                 for i, seed in enumerate(batch_seeds):
                     estimated_age = age_predictor(imgs[i:i+1])
 
@@ -336,6 +346,9 @@ def generate_images(
                     else:
                         print(f"  ✓ Seed {seed}: Age {estimated_age:.1f} > 20, proceeding...")
                         valid_indices.append(i)
+
+                age_check_total_time = time.time() - age_check_start
+                print(f"  ⏱️  Age checking: {age_check_total_time:.2f}s (synthesis: {age_check_synthesis_time:.2f}s, prediction: {age_check_total_time - age_check_synthesis_time:.2f}s)")
             else:
                 # No age predictor, all seeds are valid
                 valid_indices = list(range(current_batch_size))
@@ -350,6 +363,7 @@ def generate_images(
                 seed_images_dict = {seed: [] for seed in valid_seeds}
 
                 # For each alpha, generate images for all valid seeds at once
+                alpha_generation_start = time.time()
                 for alpha in alphas:
                     # Create modified w for all valid seeds with this alpha
                     w_modified_batch = valid_w_batch.clone()
@@ -358,14 +372,17 @@ def generate_images(
                     assert w_modified_batch.shape[1:] == (G.num_ws, G.w_dim)
 
                     # Generate all images for this alpha in one synthesis call
+                    alpha_synthesis_start = time.time()
                     imgs = G.synthesis(w_modified_batch, noise_mode=noise_mode)
                     imgs = (
                         (imgs.permute(0, 2, 3, 1) * 127.5 + 128)
                         .clamp(0, 255)
                         .to(torch.uint8)
                     )
+                    alpha_synthesis_time = time.time() - alpha_synthesis_start
 
                     # Save each image
+                    save_start = time.time()
                     for i, seed in enumerate(valid_seeds):
                         img_array = imgs[i].cpu().numpy()
                         pil_img = PIL.Image.fromarray(img_array, "RGB")
@@ -379,6 +396,12 @@ def generate_images(
 
                         # Store for composite
                         seed_images_dict[seed].append(img_array)
+                        total_images_generated += 1
+                    save_time = time.time() - save_start
+                    print(f"  ⏱️  Alpha {alpha:+.1f}: synthesis={alpha_synthesis_time:.2f}s, save={save_time:.2f}s ({len(valid_seeds)} images)")
+
+                alpha_generation_time = time.time() - alpha_generation_start
+                print(f"  ⏱️  Total alpha generation: {alpha_generation_time:.2f}s for {len(alphas)} alphas × {len(valid_seeds)} seeds = {len(alphas) * len(valid_seeds)} images")
 
                 # Add all seed images to all_images list
                 if create_composite:
@@ -386,12 +409,33 @@ def generate_images(
                         all_images.append(seed_images_dict[seed])
         else:
             # Generate images without weight modulation (batch mode)
+            synthesis_start = time.time()
             imgs = G.synthesis(w_batch, truncation_psi=truncation_psi, noise_mode=noise_mode)
             imgs = (imgs.permute(0, 2, 3, 1) * 127.5 + 128).clamp(0, 255).to(torch.uint8)
+            synthesis_time = time.time() - synthesis_start
 
+            save_start = time.time()
             for i, seed in enumerate(batch_seeds):
                 pil_img = PIL.Image.fromarray(imgs[i].cpu().numpy(), "RGB")
                 save_image(pil_img, f"{outdir}/seed{seed:04d}.png")
+                total_images_generated += 1
+            save_time = time.time() - save_start
+            print(f"  ⏱️  Synthesis: {synthesis_time:.2f}s, Save: {save_time:.2f}s ({current_batch_size} images)")
+
+        batch_time = time.time() - batch_start_time
+        print(f"  ⏱️  Batch {batch_num} completed in {batch_time:.2f}s\n")
+
+    # Print final statistics
+    total_time = time.time() - total_start_time
+    print(f"\n{'='*60}")
+    print("📊 Generation Statistics:")
+    print(f"{'='*60}")
+    print(f"  Total images generated: {total_images_generated}")
+    print(f"  Total time: {total_time:.2f}s ({total_time/60:.2f} minutes)")
+    print(f"  Average time per image: {total_time/total_images_generated:.2f}s")
+    print(f"  Throughput: {total_images_generated/total_time:.2f} images/second")
+    print(f"  Batch size: {batch_size}")
+    print(f"{'='*60}\n")
 
     # Create composite image if weight modulation was used
     if create_composite and weight_vec is not None and len(all_images) > 0:
