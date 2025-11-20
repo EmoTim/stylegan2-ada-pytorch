@@ -345,10 +345,12 @@ def generate_images(
                 # Extract valid w vectors
                 valid_w_batch = w_batch[valid_indices]
                 valid_seeds = [batch_seeds[i] for i in valid_indices]
-                num_valid = len(valid_indices)
+
+                # Initialize storage for each valid seed's images
+                seed_images_dict = {seed: [] for seed in valid_seeds}
 
                 # For each alpha, generate images for all valid seeds at once
-                for alpha_idx, alpha in enumerate(alphas):
+                for alpha in alphas:
                     # Create modified w for all valid seeds with this alpha
                     w_modified_batch = valid_w_batch.clone()
                     # Apply weight vector to all seeds in batch
@@ -375,10 +377,13 @@ def generate_images(
                         file_path = f"{alpha_dir}/seed{seed:04d}_styles{start_idx}-{end_idx}.png"
                         save_image(pil_img, file_path)
 
-                        # Store for composite (initialize list if this is the first alpha)
-                        if alpha_idx == 0:
-                            all_images.append([])
-                        all_images[len(all_images) - num_valid + i].append(img_array)
+                        # Store for composite
+                        seed_images_dict[seed].append(img_array)
+
+                # Add all seed images to all_images list
+                if create_composite:
+                    for seed in valid_seeds:
+                        all_images.append(seed_images_dict[seed])
         else:
             # Generate images without weight modulation (batch mode)
             imgs = G.synthesis(w_batch, truncation_psi=truncation_psi, noise_mode=noise_mode)
