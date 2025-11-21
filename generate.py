@@ -23,6 +23,7 @@ import PIL.Image
 import torch
 import matplotlib.pyplot as plt
 import boto3
+from loguru import logger
 
 import legacy
 from age_estimator import AgePredictor
@@ -202,7 +203,7 @@ def generate_images(
         --weight-vector=weight.npy --style-range 12 17 --network=https://nvlabs-fi-cdn.nvidia.com/stylegan2-ada-pytorch/pretrained/ffhq.pkl
     """
 
-    print('Loading networks from "%s"...' % network_pkl)
+    logger.info('Loading networks from "{}"...', network_pkl)
     device = torch.device("cuda")
     with dnnlib.util.open_url(network_pkl) as f:
         G = legacy.load_network_pkl(f)["G_ema"].to(device)  # type: ignore
@@ -211,7 +212,7 @@ def generate_images(
 
     # Initialize GPU JPEG encoder
     gpu_jpeg_encoder = GPUJPEGEncoder(quality=95)
-    print("✓ GPU JPEG encoder initialized (quality=95)")
+    logger.success("GPU JPEG encoder initialized (quality=95)")
 
     # Initialize S3 client if bucket is specified
     s3_client = None
@@ -231,7 +232,7 @@ def generate_images(
 
         s3_client = boto3.client('s3')
         upload_executor = ThreadPoolExecutor(max_workers=8)
-        print(f'S3 upload enabled: s3://{s3_bucket_name}/{s3_prefix} (32 parallel workers)')
+        logger.info('S3 upload enabled: s3://{}/{} (8 parallel workers)', s3_bucket_name, s3_prefix)
 
     def upload_to_s3_async(jpeg_bytes, s3_key):
         """Upload JPEG bytes to S3 asynchronously."""
@@ -250,8 +251,8 @@ def generate_images(
     # Synthesize the result of a W projection.
     if projected_w is not None:
         if seeds is not None:
-            print("warn: --seeds is ignored when using --projected-w")
-        print(f'Generating images from projected W "{projected_w}"')
+            logger.warning("--seeds is ignored when using --projected-w")
+        logger.info('Generating images from projected W "{}"', projected_w)
         ws = np.load(projected_w)["w"]
         ws = torch.tensor(ws, device=device)  # pylint: disable=not-callable
         assert ws.shape[1:] == (G.num_ws, G.w_dim)
@@ -275,14 +276,14 @@ def generate_images(
         label[:, class_idx] = 1
     else:
         if class_idx is not None:
-            print("warn: --class=lbl ignored when running on an unconditional network")
+            logger.warning("--class=lbl ignored when running on an unconditional network")
 
     # Load weight vector if specified.
     weight_vec = None
     if weight_vector is not None:
-        print(f'Loading weight vector from "{weight_vector}"')
+        logger.info('Loading weight vector from "{}"', weight_vector)
         weight_vec = torch.tensor(np.load(weight_vector), device=device)
-        print(f"Weight vector shape: {weight_vec.shape}")
+        logger.info("Weight vector shape: {}", weight_vec.shape)
 
         # Validate style range
         start_idx, end_idx = style_range
@@ -290,8 +291,8 @@ def generate_images(
             ctx.fail("Style range indices must be between 0 and 17")
         if start_idx > end_idx:
             ctx.fail("Style range start must be <= end")
-        print(
-            f"Applying weight vector to style blocks {start_idx} to {end_idx} (inclusive)"
+        logger.info(
+            "Applying weight vector to style blocks {} to {} (inclusive)", start_idx, end_idx
         )
 
     # Initialize age predictor if using weight vector
@@ -299,7 +300,7 @@ def generate_images(
     if weight_vector is not None:
         if vgg_path is None:
             ctx.fail("--vgg-path is required when using --weight-vector for age filtering")
-        print("Initializing age predictor...")
+        logger.info("Initializing age predictor...")
         age_predictor = AgePredictor(vgg_path=vgg_path)
 
     # Generate images.
@@ -317,7 +318,7 @@ def generate_images(
 
         batch_num = batch_start//batch_size + 1
         total_batches = (len(seeds) + batch_size - 1)//batch_size
-        print(f"Processing batch {batch_num}/{total_batches} (seeds {batch_start}-{batch_end-1})...")
+        logger.info("Processing batch {}/{} (seeds {}-{})...", batch_num, total_batches, batch_start, batch_end-1)
         batch_start_time = time.time()
 
         # Generate latent codes for all seeds in batch
@@ -346,15 +347,15 @@ def generate_images(
                     estimated_age = age_predictor(imgs[i:i+1])
 
                     if estimated_age is None:
-                        print(f"  ⚠️  Seed {seed}: No face detected, skipping...")
+                        logger.warning("  Seed {}: No face detected, skipping...", seed)
                     elif estimated_age <= 20:
-                        print(f"  ⚠️  Seed {seed}: Age {estimated_age:.1f} <= 20, skipping...")
+                        logger.warning("  Seed {}: Age {:.1f} <= 20, skipping...", seed, estimated_age)
                     else:
-                        print(f"  ✓ Seed {seed}: Age {estimated_age:.1f} > 20, proceeding...")
+                        logger.success("  Seed {}: Age {:.1f} > 20, proceeding...", seed, estimated_age)
                         valid_indices.append(i)
 
                 age_check_total_time = time.time() - age_check_start
-                print(f"  ⏱️  Age checking: {age_check_total_time:.2f}s (synthesis: {age_check_synthesis_time:.2f}s, prediction: {age_check_total_time - age_check_synthesis_time:.2f}s)")
+                logger.info("  Age checking: {:.2f}s (synthesis: {:.2f}s, prediction: {:.2f}s)", age_check_total_time, age_check_synthesis_time, age_check_total_time - age_check_synthesis_time)
             else:
                 # No age predictor, all seeds are valid
                 valid_indices = list(range(current_batch_size))
@@ -419,10 +420,10 @@ def generate_images(
 
                     upload_submit_time = time.time() - upload_submit_start
                     save_time = time.time() - save_start
-                    print(f"  ⏱️  Alpha {alpha:+.1f}: synthesis={alpha_synthesis_time:.2f}s, encode={encode_time:.3f}s, submit={upload_submit_time:.3f}s ({len(valid_seeds)} images)")
+                    logger.info("  Alpha {:+.1f}: synthesis={:.2f}s, encode={:.3f}s, submit={:.3f}s ({} images)", alpha, alpha_synthesis_time, encode_time, upload_submit_time, len(valid_seeds))
 
                 alpha_generation_time = time.time() - alpha_generation_start
-                print(f"  ⏱️  Total alpha generation: {alpha_generation_time:.2f}s for {len(alphas)} alphas × {len(valid_seeds)} seeds = {len(alphas) * len(valid_seeds)} images")
+                logger.info("  Total alpha generation: {:.2f}s for {} alphas × {} seeds = {} images", alpha_generation_time, len(alphas), len(valid_seeds), len(alphas) * len(valid_seeds))
 
                 # Add all seed images to all_images list
                 if create_composite:
@@ -452,14 +453,14 @@ def generate_images(
                 total_images_generated += 1
             upload_submit_time = time.time() - upload_submit_start
             save_time = time.time() - save_start
-            print(f"  ⏱️  Synthesis: {synthesis_time:.2f}s, Encode: {encode_time:.3f}s, Submit: {upload_submit_time:.3f}s ({current_batch_size} images)")
+            logger.info("  Synthesis: {:.2f}s, Encode: {:.3f}s, Submit: {:.3f}s ({} images)", synthesis_time, encode_time, upload_submit_time, current_batch_size)
 
         batch_time = time.time() - batch_start_time
-        print(f"  ⏱️  Batch {batch_num} completed in {batch_time:.2f}s\n")
+        logger.info("  Batch {} completed in {:.2f}s\n", batch_num, batch_time)
 
     # Wait for all S3 uploads to complete
     if upload_executor and upload_futures:
-        print(f"\n⏳ Waiting for {len(upload_futures)} S3 uploads to complete...")
+        logger.info("\nWaiting for {} S3 uploads to complete...", len(upload_futures))
         upload_start = time.time()
 
         success_count = 0
@@ -473,33 +474,33 @@ def generate_images(
                 failed_uploads.append(result)
 
         upload_time = time.time() - upload_start
-        print(f"✅ S3 uploads completed: {success_count}/{len(upload_futures)} successful in {upload_time:.2f}s")
-        print(f"   Upload throughput: {success_count/upload_time:.2f} images/second")
+        logger.success("S3 uploads completed: {}/{} successful in {:.2f}s", success_count, len(upload_futures), upload_time)
+        logger.info("   Upload throughput: {:.2f} images/second", success_count/upload_time)
 
         if failed_uploads:
-            print(f"⚠️  Failed uploads ({len(failed_uploads)}):")
+            logger.warning("Failed uploads ({}):", len(failed_uploads))
             for error in failed_uploads[:5]:  # Show first 5 errors
-                print(f"   - {error}")
+                logger.warning("   - {}", error)
             if len(failed_uploads) > 5:
-                print(f"   ... and {len(failed_uploads) - 5} more")
+                logger.warning("   ... and {} more", len(failed_uploads) - 5)
 
         upload_executor.shutdown(wait=False)
 
     # Print final statistics
     total_time = time.time() - total_start_time
-    print(f"\n{'='*60}")
-    print("📊 Generation Statistics:")
-    print(f"{'='*60}")
-    print(f"  Total images generated: {total_images_generated}")
-    print(f"  Total time: {total_time:.2f}s ({total_time/60:.2f} minutes)")
-    print(f"  Average time per image: {total_time/total_images_generated:.2f}s")
-    print(f"  Throughput: {total_images_generated/total_time:.2f} images/second")
-    print(f"  Batch size: {batch_size}")
-    print(f"{'='*60}\n")
+    logger.info("\n{'='*60}")
+    logger.info("Generation Statistics:")
+    logger.info("{'='*60}")
+    logger.info("  Total images generated: {}", total_images_generated)
+    logger.info("  Total time: {:.2f}s ({:.2f} minutes)", total_time, total_time/60)
+    logger.info("  Average time per image: {:.2f}s", total_time/total_images_generated)
+    logger.info("  Throughput: {:.2f} images/second", total_images_generated/total_time)
+    logger.info("  Batch size: {}", batch_size)
+    logger.info("{'='*60}\n")
 
     # Create composite image if weight modulation was used
     if create_composite and weight_vec is not None and len(all_images) > 0:
-        print("Creating composite image...")
+        logger.info("Creating composite image...")
         num_rows = len(all_images)
         num_cols = len(alphas)
         start_idx, end_idx = style_range
@@ -556,16 +557,16 @@ def generate_images(
         composite_path = f"{outdir}/composite_grid_styles{start_idx}-{end_idx}.png"
         plt.savefig(composite_path, dpi=150, bbox_inches="tight")
         plt.close()
-        print(f"Composite image saved to {composite_path}")
+        logger.success("Composite image saved to {}", composite_path)
 
         # Upload composite to S3 if enabled
         if s3_client:
             s3_key = s3_prefix + composite_path.replace(outdir + '/', '')
             try:
                 s3_client.upload_file(composite_path, s3_bucket_name, s3_key)
-                print(f'  ✓ Composite uploaded to s3://{s3_bucket_name}/{s3_key}')
+                logger.success('  Composite uploaded to s3://{}/{}', s3_bucket_name, s3_key)
             except Exception as e:
-                print(f'  ⚠️ S3 upload failed for composite: {e}')
+                logger.error('  S3 upload failed for composite: {}', e)
 
 
 # ----------------------------------------------------------------------------
