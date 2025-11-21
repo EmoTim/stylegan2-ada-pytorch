@@ -12,16 +12,21 @@ import os
 import re
 import warnings
 from typing import List, Optional
-
+import io
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from nvidia import nvimgcodec
 import click
 import dnnlib
 import numpy as np
 import PIL.Image
 import torch
 import matplotlib.pyplot as plt
+import boto3
 
 import legacy
 from age_estimator import AgePredictor
+from gpu_jpeg_encoder import GPUJPEGEncoder
 
 # Suppress CUDA kernel compilation warnings
 warnings.filterwarnings('ignore', message='Failed to build CUDA kernels for upfirdn2d')
@@ -121,6 +126,19 @@ def num_range(s: str) -> List[int]:
     default=False,
     show_default=True,
 )
+@click.option(
+    "--s3-bucket",
+    help="S3 bucket to upload images to (e.g., 's3://bucket-name/path/to/images')",
+    type=str,
+    metavar="S3_URI",
+)
+@click.option(
+    "--batch-size",
+    help="Number of seeds to process in parallel (default: 1)",
+    type=int,
+    default=1,
+    show_default=True,
+)
 
 def generate_images(
     ctx: click.Context,
@@ -136,6 +154,8 @@ def generate_images(
     alphas: List[int],
     style_range: tuple,
     create_composite: bool = False,
+    s3_bucket: Optional[str] = None,
+    batch_size: int = 1,
 ):
     """Generate images using pretrained network pickle.
 
@@ -189,6 +209,44 @@ def generate_images(
 
     os.makedirs(outdir, exist_ok=True)
 
+    # Initialize GPU JPEG encoder
+    gpu_jpeg_encoder = GPUJPEGEncoder(quality=95)
+    print("✓ GPU JPEG encoder initialized (quality=95)")
+
+    # Initialize S3 client if bucket is specified
+    s3_client = None
+    s3_bucket_name = None
+    s3_prefix = None
+    upload_executor = None
+
+    if s3_bucket:
+        # Parse S3 URI (e.g., s3://bucket-name/path/to/images)
+        if s3_bucket.startswith('s3://'):
+            s3_bucket = s3_bucket[5:]  # Remove 's3://'
+        parts = s3_bucket.split('/', 1)
+        s3_bucket_name = parts[0]
+        s3_prefix = parts[1] if len(parts) > 1 else ''
+        if s3_prefix and not s3_prefix.endswith('/'):
+            s3_prefix += '/'
+
+        s3_client = boto3.client('s3')
+        upload_executor = ThreadPoolExecutor(max_workers=8)
+        print(f'S3 upload enabled: s3://{s3_bucket_name}/{s3_prefix} (32 parallel workers)')
+
+    def upload_to_s3_async(jpeg_bytes, s3_key):
+        """Upload JPEG bytes to S3 asynchronously."""
+        try:
+            buf = io.BytesIO(jpeg_bytes)
+            s3_client.upload_fileobj(buf, s3_bucket_name, s3_key)
+            return True, s3_key
+        except Exception as e:
+            return False, f'{s3_key}: {e}'
+
+    def save_image(pil_img, file_path):
+        """Save image locally as PNG."""
+        # Save locally as PNG
+        pil_img.save(file_path)
+
     # Synthesize the result of a W projection.
     if projected_w is not None:
         if seeds is not None:
@@ -200,9 +258,8 @@ def generate_images(
         for idx, w in enumerate(ws):
             img = G.synthesis(w.unsqueeze(0), noise_mode=noise_mode)
             img = (img.permute(0, 2, 3, 1) * 127.5 + 128).clamp(0, 255).to(torch.uint8)
-            img = PIL.Image.fromarray(img[0].cpu().numpy(), "RGB").save(
-                f"{outdir}/proj{idx:02d}.png"
-            )
+            pil_img = PIL.Image.fromarray(img[0].cpu().numpy(), "RGB")
+            save_image(pil_img, f"{outdir}/proj{idx:02d}.png")
         return
 
     if seeds is None:
@@ -240,69 +297,205 @@ def generate_images(
     # Initialize age predictor if using weight vector
     age_predictor = None
     if weight_vector is not None:
+        if vgg_path is None:
+            ctx.fail("--vgg-path is required when using --weight-vector for age filtering")
         print("Initializing age predictor...")
         age_predictor = AgePredictor(vgg_path=vgg_path)
 
     # Generate images.
     all_images = []  # Store images for composite: list of lists (one per seed)
 
-    for seed_idx, seed in enumerate(seeds):
-        print("Generating image for seed %d (%d/%d) ..." % (seed, seed_idx, len(seeds)))
-        z = torch.from_numpy(np.random.RandomState(seed).randn(1, G.z_dim)).to(device)
-        w = G.mapping(z, label, truncation_psi=truncation_psi)
+    total_start_time = time.time()
+    total_images_generated = 0
+    upload_futures = []  # Track async S3 uploads
+
+    # Process seeds in batches
+    for batch_start in range(0, len(seeds), batch_size):
+        batch_end = min(batch_start + batch_size, len(seeds))
+        batch_seeds = seeds[batch_start:batch_end]
+        current_batch_size = len(batch_seeds)
+
+        batch_num = batch_start//batch_size + 1
+        total_batches = (len(seeds) + batch_size - 1)//batch_size
+        print(f"Processing batch {batch_num}/{total_batches} (seeds {batch_start}-{batch_end-1})...")
+        batch_start_time = time.time()
+
+        # Generate latent codes for all seeds in batch
+        z_batch = torch.stack([
+            torch.from_numpy(np.random.RandomState(seed).randn(G.z_dim))
+            for seed in batch_seeds
+        ]).to(device)
+
+        # Expand label to match batch size
+        label_batch = label.repeat(current_batch_size, 1)
+
+        # Generate w latent codes for batch
+        w_batch = G.mapping(z_batch, label_batch, truncation_psi=truncation_psi)
 
         if weight_vec is not None:
             start_idx, end_idx = style_range
 
-            # First, check age with alpha=0 if age estimator is available
+            # First, check ages with alpha=0 if age estimator is available
+            valid_indices = []
             if age_predictor is not None:
-                img = G.synthesis(w, noise_mode=noise_mode)
-                estimated_age = age_predictor(img)
+                age_check_start = time.time()
+                imgs = G.synthesis(w_batch, noise_mode=noise_mode)
+                age_check_synthesis_time = time.time() - age_check_start
 
-                if estimated_age is None:
-                    print(f"  ⚠️  Seed {seed}: No face detected, skipping...")
-                    continue
-                elif estimated_age <= 20:
-                    print(f"  ⚠️  Seed {seed}: Age {estimated_age:.1f} <= 20, skipping...")
-                    continue
-                else:
-                    print(f"  ✓ Seed {seed}: Age {estimated_age:.1f} > 20, proceeding...")
+                for i, seed in enumerate(batch_seeds):
+                    estimated_age = age_predictor(imgs[i:i+1])
 
-            # If age check passed (or not applicable), generate all alphas
-            seed_images = []
-            for alpha in alphas:
-                # Clone w to avoid modifying the original
-                w_modified = w.clone()
-                # Apply weight vector only to the specified range of style blocks
-                w_modified[:, start_idx : end_idx + 1, :] += alpha * weight_vec[
-                    start_idx : end_idx + 1, :
-                ].unsqueeze(0)
-                assert w_modified.shape[1:] == (G.num_ws, G.w_dim)
-                img = G.synthesis(w_modified, noise_mode=noise_mode)
-                img = (
-                    (img.permute(0, 2, 3, 1) * 127.5 + 128)
-                    .clamp(0, 255)
-                    .to(torch.uint8)
-                )
-                img_array = img[0].cpu().numpy()
-                pil_img = PIL.Image.fromarray(img_array, "RGB")
+                    if estimated_age is None:
+                        print(f"  ⚠️  Seed {seed}: No face detected, skipping...")
+                    elif estimated_age <= 20:
+                        print(f"  ⚠️  Seed {seed}: Age {estimated_age:.1f} <= 20, skipping...")
+                    else:
+                        print(f"  ✓ Seed {seed}: Age {estimated_age:.1f} > 20, proceeding...")
+                        valid_indices.append(i)
 
-                # Create subdirectory for this alpha value
-                alpha_dir = os.path.join(outdir, f"alpha_{alpha}")
-                os.makedirs(alpha_dir, exist_ok=True)
+                age_check_total_time = time.time() - age_check_start
+                print(f"  ⏱️  Age checking: {age_check_total_time:.2f}s (synthesis: {age_check_synthesis_time:.2f}s, prediction: {age_check_total_time - age_check_synthesis_time:.2f}s)")
+            else:
+                # No age predictor, all seeds are valid
+                valid_indices = list(range(current_batch_size))
 
-                pil_img.save(
-                    f"{alpha_dir}/seed{seed:04d}_styles{start_idx}-{end_idx}.png"
-                )
-                seed_images.append(img_array)
-            all_images.append(seed_images)
+            # Process valid seeds - batch across all alphas for all valid seeds simultaneously
+            if len(valid_indices) > 0:
+                # Extract valid w vectors
+                valid_w_batch = w_batch[valid_indices]
+                valid_seeds = [batch_seeds[i] for i in valid_indices]
+
+                # Initialize storage for each valid seed's images
+                seed_images_dict = {seed: [] for seed in valid_seeds}
+
+                # For each alpha, generate images for all valid seeds at once
+                alpha_generation_start = time.time()
+                for alpha in alphas:
+                    # Create modified w for all valid seeds with this alpha
+                    w_modified_batch = valid_w_batch.clone()
+                    # Apply weight vector to all seeds in batch
+                    w_modified_batch[:, start_idx:end_idx + 1, :] += alpha * weight_vec[start_idx:end_idx + 1, :].unsqueeze(0)
+                    assert w_modified_batch.shape[1:] == (G.num_ws, G.w_dim)
+
+                    # Generate all images for this alpha in one synthesis call
+                    alpha_synthesis_start = time.time()
+                    imgs = G.synthesis(w_modified_batch, noise_mode=noise_mode)
+                    imgs = (
+                        (imgs.permute(0, 2, 3, 1) * 127.5 + 128)
+                        .clamp(0, 255)
+                        .to(torch.uint8)
+                    )
+                    alpha_synthesis_time = time.time() - alpha_synthesis_start
+
+                    # GPU-batch encode to JPEG and upload
+                    save_start = time.time()
+
+                    # GPU-side JPEG encoding (batch) - imgs is already [B, H, W, 3]
+                    encode_start = time.time()
+                    # enc = nvimgcodec.Encoder()
+                    # jpeg_list = enc.encode([img for img in imgs], ".jpg")
+                    jpeg_list = gpu_jpeg_encoder.encode_batch(imgs)
+                    encode_time = time.time() - encode_start
+
+                    # Submit uploads and save to composite
+                    upload_submit_start = time.time()
+                    for i, seed in enumerate(valid_seeds):
+                        # Create subdirectory for this alpha value
+                        alpha_dir = os.path.join(outdir, f"alpha_{alpha}")
+                        os.makedirs(alpha_dir, exist_ok=True)
+
+                        file_path = f"{alpha_dir}/seed{seed:04d}_styles{start_idx}-{end_idx}.jpg"
+
+                        # Submit S3 upload asynchronously if enabled
+                        if upload_executor:
+                            s3_key = s3_prefix + file_path.replace(outdir + '/', '')
+                            future = upload_executor.submit(upload_to_s3_async, jpeg_list[i], s3_key)
+                            upload_futures.append(future)
+
+                        # Store for composite (convert to numpy for matplotlib)
+                        img_array = imgs[i].cpu().numpy()
+                        seed_images_dict[seed].append(img_array)
+                        total_images_generated += 1
+
+                    upload_submit_time = time.time() - upload_submit_start
+                    save_time = time.time() - save_start
+                    print(f"  ⏱️  Alpha {alpha:+.1f}: synthesis={alpha_synthesis_time:.2f}s, encode={encode_time:.3f}s, submit={upload_submit_time:.3f}s ({len(valid_seeds)} images)")
+
+                alpha_generation_time = time.time() - alpha_generation_start
+                print(f"  ⏱️  Total alpha generation: {alpha_generation_time:.2f}s for {len(alphas)} alphas × {len(valid_seeds)} seeds = {len(alphas) * len(valid_seeds)} images")
+
+                # Add all seed images to all_images list
+                if create_composite:
+                    for seed in valid_seeds:
+                        all_images.append(seed_images_dict[seed])
         else:
-            # Generate image without weight modulation
-            img = G.synthesis(w, truncation_psi=truncation_psi, noise_mode=noise_mode)
-            img = (img.permute(0, 2, 3, 1) * 127.5 + 128).clamp(0, 255).to(torch.uint8)
-            PIL.Image.fromarray(img[0].cpu().numpy(), "RGB").save(
-                f"{outdir}/seed{seed:04d}.png"
-            )
+            # Generate images without weight modulation (batch mode)
+            synthesis_start = time.time()
+            imgs = G.synthesis(w_batch, truncation_psi=truncation_psi, noise_mode=noise_mode)
+            imgs = (imgs.permute(0, 2, 3, 1) * 127.5 + 128).clamp(0, 255).to(torch.uint8)
+            synthesis_time = time.time() - synthesis_start
+
+            # GPU-batch encode to JPEG
+            save_start = time.time()
+            encode_start = time.time()
+            jpeg_list = gpu_jpeg_encoder.encode_batch(imgs)
+            encode_time = time.time() - encode_start
+
+            upload_submit_start = time.time()
+            for i, seed in enumerate(batch_seeds):
+                # Submit S3 upload asynchronously if enabled
+                if upload_executor:
+                    s3_key = s3_prefix + f"seed{seed:04d}.jpg"
+                    future = upload_executor.submit(upload_to_s3_async, jpeg_list[i], s3_key)
+                    upload_futures.append(future)
+
+                total_images_generated += 1
+            upload_submit_time = time.time() - upload_submit_start
+            save_time = time.time() - save_start
+            print(f"  ⏱️  Synthesis: {synthesis_time:.2f}s, Encode: {encode_time:.3f}s, Submit: {upload_submit_time:.3f}s ({current_batch_size} images)")
+
+        batch_time = time.time() - batch_start_time
+        print(f"  ⏱️  Batch {batch_num} completed in {batch_time:.2f}s\n")
+
+    # Wait for all S3 uploads to complete
+    if upload_executor and upload_futures:
+        print(f"\n⏳ Waiting for {len(upload_futures)} S3 uploads to complete...")
+        upload_start = time.time()
+
+        success_count = 0
+        failed_uploads = []
+
+        for future in as_completed(upload_futures):
+            success, result = future.result()
+            if success:
+                success_count += 1
+            else:
+                failed_uploads.append(result)
+
+        upload_time = time.time() - upload_start
+        print(f"✅ S3 uploads completed: {success_count}/{len(upload_futures)} successful in {upload_time:.2f}s")
+        print(f"   Upload throughput: {success_count/upload_time:.2f} images/second")
+
+        if failed_uploads:
+            print(f"⚠️  Failed uploads ({len(failed_uploads)}):")
+            for error in failed_uploads[:5]:  # Show first 5 errors
+                print(f"   - {error}")
+            if len(failed_uploads) > 5:
+                print(f"   ... and {len(failed_uploads) - 5} more")
+
+        upload_executor.shutdown(wait=False)
+
+    # Print final statistics
+    total_time = time.time() - total_start_time
+    print(f"\n{'='*60}")
+    print("📊 Generation Statistics:")
+    print(f"{'='*60}")
+    print(f"  Total images generated: {total_images_generated}")
+    print(f"  Total time: {total_time:.2f}s ({total_time/60:.2f} minutes)")
+    print(f"  Average time per image: {total_time/total_images_generated:.2f}s")
+    print(f"  Throughput: {total_images_generated/total_time:.2f} images/second")
+    print(f"  Batch size: {batch_size}")
+    print(f"{'='*60}\n")
 
     # Create composite image if weight modulation was used
     if create_composite and weight_vec is not None and len(all_images) > 0:
@@ -364,6 +557,15 @@ def generate_images(
         plt.savefig(composite_path, dpi=150, bbox_inches="tight")
         plt.close()
         print(f"Composite image saved to {composite_path}")
+
+        # Upload composite to S3 if enabled
+        if s3_client:
+            s3_key = s3_prefix + composite_path.replace(outdir + '/', '')
+            try:
+                s3_client.upload_file(composite_path, s3_bucket_name, s3_key)
+                print(f'  ✓ Composite uploaded to s3://{s3_bucket_name}/{s3_key}')
+            except Exception as e:
+                print(f'  ⚠️ S3 upload failed for composite: {e}')
 
 
 # ----------------------------------------------------------------------------
