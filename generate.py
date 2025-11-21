@@ -211,7 +211,8 @@ def generate_images(
     os.makedirs(outdir, exist_ok=True)
 
     # Initialize GPU JPEG encoder
-    gpu_jpeg_encoder = GPUJPEGEncoder(quality=95)
+    gpu_jpeg_encoder = nvimgcodec.Encoder()
+
     logger.success("GPU JPEG encoder initialized (quality=95)")
 
     # Initialize S3 client if bucket is specified
@@ -393,9 +394,7 @@ def generate_images(
 
                     # GPU-side JPEG encoding (batch) - imgs is already [B, H, W, 3]
                     encode_start = time.time()
-                    # enc = nvimgcodec.Encoder()
-                    # jpeg_list = enc.encode([img for img in imgs], ".jpg")
-                    jpeg_list = gpu_jpeg_encoder.encode_batch(imgs)
+                    jpeg_list = enc.encode([img for img in imgs], ".jpg")
                     encode_time = time.time() - encode_start
 
                     # Submit uploads and save to composite
